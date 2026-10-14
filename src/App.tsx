@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { auth, signInWithGoogle, signOutUser } from './services/firebase';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { FranchisePlansView } from './components/portal/FranchisePlansView';
@@ -18,6 +20,7 @@ import { UserRole, AppNotification, FranchiseApplication, EmailNotification, Syn
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('plans');
   const [userRole, setUserRole] = useState<UserRole>('director');
+  const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [currency, setCurrency] = useState<Currency>(() => {
     if (typeof window === 'undefined') return 'INR';
     return (localStorage.getItem('truedeal_currency') as Currency) || 'INR';
@@ -78,6 +81,32 @@ export default function App() {
     };
   }, []);
 
+  // Firebase Authentication State Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const handleSignInGoogle = async () => {
+    try {
+      await signInWithGoogle();
+      refreshAllData();
+    } catch (err) {
+      console.error('Sign-in failed:', err);
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOutUser();
+      refreshAllData();
+    } catch (err) {
+      console.error('Sign-out failed:', err);
+    }
+  };
+
   const refreshAllData = () => {
     setNotifications(NotificationService.getNotifications());
     setEmails(NotificationService.getEmails());
@@ -95,7 +124,7 @@ export default function App() {
   const unreadNotifsCount = notifications.filter(n => !n.read).length;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200">
       {/* Offline Banner when in offline mode */}
       {isOffline && (
         <div className="bg-amber-500 text-slate-950 px-4 py-1.5 text-xs font-semibold text-center flex items-center justify-center gap-2">
@@ -103,7 +132,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => handleToggleOffline(false)}
-            className="underline hover:text-white transition-colors"
+            className="underline hover:text-white transition-colors cursor-pointer"
           >
             Re-connect
           </button>
@@ -127,10 +156,13 @@ export default function App() {
         unreadCount={unreadNotifsCount}
         currency={currency}
         onToggleCurrency={setCurrency}
+        currentUser={currentUser}
+        onSignInGoogle={handleSignInGoogle}
+        onSignOut={handleSignOut}
       />
 
-      {/* Main Viewport Content */}
-      <main className="flex-1">
+      {/* Main Viewport Content - Full Width & Justified */}
+      <main className="flex-1 w-full max-w-full overflow-x-hidden">
         {currentTab === 'plans' && (
           <FranchisePlansView
             currency={currency}

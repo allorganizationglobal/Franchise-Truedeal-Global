@@ -239,7 +239,8 @@ export function AdminDashboard({ userRole, onRefresh, onSelectApplication }: Adm
 
       {/* KANBAN BOARD VIEW */}
       {viewMode === 'kanban' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 overflow-x-auto pb-4">
+        <div className="overflow-x-auto pb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 min-w-full lg:min-w-[1050px]">
           {kanbanColumns.map(col => {
             const colApps = filteredApps.filter(a => col.statuses.includes(a.status));
             return (
@@ -321,6 +322,7 @@ export function AdminDashboard({ userRole, onRefresh, onSelectApplication }: Adm
               </div>
             );
           })}
+          </div>
         </div>
       )}
 

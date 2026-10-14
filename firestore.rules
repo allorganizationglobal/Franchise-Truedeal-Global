@@ -21,6 +21,12 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // User Profiles & Auth state
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isValidId(userId);
+    }
+
     // Connection testing
     match /test/{docId} {
       allow read, write: if true;

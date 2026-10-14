@@ -159,12 +159,12 @@ export function FranchisePlansView({
         </p>
 
         {/* Currency Switcher & Surcharge Transparency Box */}
-        <div className="pt-2 flex flex-col items-center gap-3">
-          <div className="inline-flex items-center p-1.5 bg-slate-100 dark:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
+        <div className="pt-2 flex flex-col items-center gap-3 w-full">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center p-1.5 bg-slate-100 dark:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm w-full sm:w-auto max-w-xl">
             <button
               type="button"
               onClick={() => onToggleCurrency('INR')}
-              className={`py-2 px-5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              className={`py-2 px-4 sm:px-5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                 currency === 'INR'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-md ring-1 ring-slate-200 dark:ring-slate-700'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -179,7 +179,7 @@ export function FranchisePlansView({
             <button
               type="button"
               onClick={() => onToggleCurrency('USD')}
-              className={`py-2 px-5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              className={`py-2 px-4 sm:px-5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                 currency === 'USD'
                   ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-md ring-1 ring-slate-200 dark:ring-slate-700'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
@@ -194,7 +194,7 @@ export function FranchisePlansView({
           </div>
 
           {currency === 'USD' ? (
-            <div className="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 px-4 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-2 max-w-xl text-left animate-fade-in shadow-xs">
+            <div className="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 px-4 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-2 max-w-xl text-left animate-fade-in shadow-xs w-full sm:w-auto">
               <Sparkles className="w-4 h-4 shrink-0 text-amber-500" />
               <span>
                 <strong>
@@ -241,8 +241,8 @@ export function FranchisePlansView({
         </div>
       </div>
 
-      {/* 8 Official TrueDeal Global Franchise Plan Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
+      {/* 8 Official TrueDeal Global Franchise Plan Cards Grid - Perfectly Justified for Mobile, Tablet, Laptop, and Desktop */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 items-stretch">
         {filteredPlans.map((plan) => {
           const isSelected = selectedPlanId === plan.id;
           const displayPrice = currency === 'INR'
@@ -350,7 +350,7 @@ export function FranchisePlansView({
       </div>
 
       {/* Interactive Franchise Commission & ROI Calculator */}
-      <div className="p-8 sm:p-10 bg-white dark:bg-[#002244] rounded-3xl border border-slate-200 dark:border-white/10 shadow-xl space-y-8">
+      <div className="p-5 sm:p-8 lg:p-10 bg-white dark:bg-[#002244] rounded-3xl border border-slate-200 dark:border-white/10 shadow-xl space-y-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-white/10">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
@@ -367,7 +367,7 @@ export function FranchisePlansView({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start md:self-auto">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300 px-3">
               {language === 'hi' ? 'मुद्रा:' : 'Currency:'} {currency === 'INR' ? '₹ INR' : '$ USD (+10%)'}
             </span>
@@ -427,7 +427,7 @@ export function FranchisePlansView({
                 <span>Plan Commission Ceiling:</span>
                 <span className="font-mono text-emerald-600 dark:text-emerald-400 text-sm">{calcCommissionRate}% commission</span>
               </div>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
                   { label: 'Basic (15%)', val: 15 },
                   { label: 'Standard (25%)', val: 25 },
@@ -578,13 +578,13 @@ export function FranchisePlansView({
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0">
+          <div className="flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3 w-full lg:w-auto shrink-0">
             {/* WhatsApp Button */}
             <a
               href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Global%20Team,%20I%20am%20interested%20in%20a%20franchise%20partnership.%20Please%20guide%20me."
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-lg transition-all hover:scale-105"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-lg transition-all hover:scale-105"
             >
               <WhatsAppIcon className="w-4 h-4 text-white" />
               <span>WhatsApp: +91-8091667890</span>
@@ -593,7 +593,7 @@ export function FranchisePlansView({
             {/* Phone Button */}
             <a
               href="tel:+919317194033"
-              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs flex items-center gap-2 transition-all hover:bg-white/25"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs flex items-center gap-2 transition-all hover:bg-white/25"
             >
               <Phone className="w-4 h-4 text-amber-400" />
               <span>Call: +91-9317194033</span>
@@ -602,7 +602,7 @@ export function FranchisePlansView({
             {/* Email Button */}
             <a
               href="mailto:info@truedealglobal.com"
-              className="px-4 py-2.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs flex items-center gap-2 transition-all"
+              className="w-full sm:w-auto justify-center px-4 py-2.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs flex items-center gap-2 transition-all"
             >
               <Mail className="w-4 h-4 text-white" />
               <span>info@truedealglobal.com</span>

@@ -212,8 +212,8 @@ export function SuccessStoriesSection({ currency, onSelectPlan }: SuccessStories
       </div>
 
       {/* Network Benchmark KPI Bar */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-6 bg-slate-900 text-white rounded-3xl border border-slate-800 shadow-xl">
-        <div className="p-4 border-r border-slate-800/80 last:border-none">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-5 sm:p-6 bg-slate-900 text-white rounded-3xl border border-slate-800 shadow-xl">
+        <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
           <span className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider block mb-1">
             Average Growth (Yr 1)
           </span>
@@ -225,7 +225,7 @@ export function SuccessStoriesSection({ currency, onSelectPlan }: SuccessStories
           </span>
         </div>
 
-        <div className="p-4 border-r border-slate-800/80 last:border-none">
+        <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
           <span className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider block mb-1">
             Commissions Disbursed
           </span>
@@ -237,7 +237,7 @@ export function SuccessStoriesSection({ currency, onSelectPlan }: SuccessStories
           </span>
         </div>
 
-        <div className="p-4 border-r border-slate-800/80 last:border-none">
+        <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
           <span className="text-[11px] font-semibold text-indigo-400 uppercase tracking-wider block mb-1">
             Active Territories
           </span>
@@ -249,7 +249,7 @@ export function SuccessStoriesSection({ currency, onSelectPlan }: SuccessStories
           </span>
         </div>
 
-        <div className="p-4">
+        <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
           <span className="text-[11px] font-semibold text-teal-400 uppercase tracking-wider block mb-1">
             Partner Retention
           </span>
