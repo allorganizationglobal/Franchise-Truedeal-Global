@@ -152,26 +152,26 @@ export function Navbar({
             {/* Direct Corporate Phone Hotline */}
             <a
               href="tel:+919317194033"
-              className="hidden md:inline-flex items-center gap-1.5 text-slate-300 hover:text-amber-400 transition-colors py-0.5 text-[11px]"
+              className="hidden lg:inline-flex items-center gap-1.5 text-slate-300 hover:text-amber-400 transition-colors py-0.5 text-[11px]"
               title="Call TrueDeal Global: +91-9317194033"
             >
               <Phone className="w-3 h-3 text-amber-400 shrink-0" />
               <span className="font-mono font-medium">+91-9317194033</span>
             </a>
 
-            <span className="text-slate-700 hidden md:inline">|</span>
+            <span className="text-slate-700 hidden lg:inline">|</span>
 
-            {/* Direct WhatsApp Instant Connect */}
+            {/* Direct WhatsApp Instant Connect - Always Visible Top Right */}
             <a
               href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Global%20Team,%20I%20am%20interested%20in%20a%20franchise%20partnership.%20Please%20guide%20me."
               target="_blank"
               rel="noopener noreferrer"
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 hover:bg-emerald-500/30 hover:text-emerald-100 transition-all text-[11px] font-semibold shadow-xs"
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/25 hover:bg-emerald-500/40 border border-emerald-400/60 text-emerald-300 hover:text-white transition-all text-[10px] sm:text-[11px] font-bold shadow-xs cursor-pointer shrink-0"
               title="Connect instantly on WhatsApp: +91-8091667890"
             >
-              <WhatsAppIcon className="w-3 h-3 text-emerald-400 shrink-0" />
-              <span className="hidden xl:inline">WhatsApp:</span>
-              <span className="font-mono">+91-8091667890</span>
+              <WhatsAppIcon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span className="hidden xs:inline font-bold text-emerald-300">WhatsApp:</span>
+              <span className="font-mono font-bold tracking-tight text-white">+91-8091667890</span>
             </a>
 
             <span className="text-slate-700 hidden sm:inline">|</span>
@@ -654,6 +654,19 @@ export function Navbar({
                   </div>
                 )}
               </div>
+
+              {/* Direct WhatsApp Instant Connect in Main Header Top Right */}
+              <a
+                href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Global%20Team,%20I%20am%20interested%20in%20a%20franchise%20partnership.%20Please%20guide%20me."
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-xs hover:shadow-md cursor-pointer shrink-0"
+                title="Connect on WhatsApp: +91-8091667890"
+              >
+                <WhatsAppIcon className="w-3.5 h-3.5 text-white shrink-0" />
+                <span className="hidden xl:inline">WhatsApp:</span>
+                <span className="font-mono font-bold">+91-8091667890</span>
+              </a>
 
               {/* Primary High-Impact Executive CTA Button */}
               <button
