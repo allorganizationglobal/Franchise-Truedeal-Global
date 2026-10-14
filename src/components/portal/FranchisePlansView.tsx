@@ -22,11 +22,15 @@ import {
   ShieldCheck,
   CheckCircle2,
   Copy,
-  QrCode
+  QrCode,
+  Phone,
+  Mail
 } from 'lucide-react';
 import { FRANCHISE_PLANS, USD_INR_RATE, USD_SURCHARGE_PCT, formatPrice } from '../../services/storage';
 import { FranchisePlan, Currency } from '../../types/franchise';
 import { SuccessStoriesSection } from './SuccessStoriesSection';
+import { WhatsAppIcon } from '../common/WhatsAppSupportWidget';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface FranchisePlansViewProps {
   currency: Currency;
@@ -39,6 +43,7 @@ export function FranchisePlansView({
   onToggleCurrency,
   onSelectPlan
 }: FranchisePlansViewProps) {
+  const { language, t } = useLanguage();
   const [selectedPlanId, setSelectedPlanId] = useState<string>('plan_standard');
   const [filterCategory, setFilterCategory] = useState<'all' | 'starter' | 'growth' | 'authority' | 'master'>('all');
   
@@ -71,7 +76,28 @@ export function FranchisePlansView({
   const monthlyEarningsUSD = Math.round((monthlyEarningsINR / USD_INR_RATE) * (1 + USD_SURCHARGE_PCT / 100));
   const yearlyEarningsUSD = monthlyEarningsUSD * 12;
 
-  const faqs = [
+  const faqs = language === 'hi' ? [
+    {
+      q: 'क्या भारत से बाहर का कोई व्यक्ति ट्रूडील ग्लोबल फ़्रैंचाइज़ी योजना से जुड़ सकता है?',
+      a: 'हाँ, बिल्कुल! TrueDeal Global का मुख्यालय गाजियाबाद (एनसीआर), भारत में स्थित है, लेकिन हमारा फ़्रैंचाइज़ी नेटवर्क पूर्णतः अंतर्राष्ट्रीय है। हम संयुक्त राज्य अमेरिका (टेक्सास), संयुक्त अरब अमीरात (दुबई), ऑस्ट्रेलिया (मेलबर्न), कनाडा, सिंगापुर, यूके और यूरोप भर में सेवाएं प्रदान करते हैं। कोई भी व्यक्ति दुनिया में कहीं से भी जुड़ सकता है।'
+    },
+    {
+      q: 'यूएस डॉलर (USD) चुनने पर 10% अतिरिक्त दर क्यों लागू होती है?',
+      a: 'हमारा आधार फ़्रैंचाइज़ी शुल्क घरेलू भारतीय भागीदारों के लिए भारतीय रुपये (INR) में निर्धारित है। जब आप अमेरिकी डॉलर (USD) चुनते हैं, तो यह वर्तमान विदेशी मुद्रा दर पर +10% अंतर्राष्ट्रीय दर के साथ तय होता है, जिससे सीमा-पार बैंकिंग और अंतर्राष्ट्रीय नियामक अनुपालन सुचारू रूप से पूरा होता है।'
+    },
+    {
+      q: 'ट्रूडील फ़्रैंचाइज़ी के रूप में मैं किन व्यावसायिक सेवाओं को बेच और प्रमोट कर सकता हूँ?',
+      a: 'आपकी चुनी हुई योजना के आधार पर आपको 20 से 50+ बहु-उद्योग क्षेत्रों के अधिकार मिलते हैं। इनमें कस्टम वेबसाइट व ऐप डेवलपमेंट, डिजिटल मार्केटिंग व एसईओ, घरेलू व अंतर्राष्ट्रीय टूर पैकेज, वीज़ा कंसल्टेंसी, रियल एस्टेट ब्रोकरेज, ई-कॉमर्स, मीडिया व म्यूजिक रिकॉर्डिंग, और कॉलेज एडमिशन शामिल हैं।'
+    },
+    {
+      q: 'क्या फ़्रैंचाइज़ी चलाने के लिए तकनीकी ज्ञान या पिछले अनुभव की आवश्यकता है?',
+      a: 'किसी भी तकनीकी या पूर्व अनुभव की आवश्यकता नहीं है! TrueDeal Global एक संपूर्ण टर्नकी समाधान प्रदाता है। आप केवल ग्राहक पूछताछ उत्पन्न करते हैं, और हमारी विशेष बैकएंड टीम सभी प्रोजेक्ट्स को पूरा करती है। आप प्रति सप्ताह दो बार अपना कमीशन प्राप्त करते हैं।'
+    },
+    {
+      q: 'कमीशन और रेफरल बोनस का भुगतान कितनी बार किया जाता है?',
+      a: 'सभी फ़्रैंचाइज़ी कमीशन (10% से 85% तक) और 20% प्रत्यक्ष सब-फ़्रैंचाइज़ी रेफरल बोनस सप्ताह में दो बार सीधे आपके बैंक खाते में स्थानांतरित किए जाते हैं।'
+    }
+  ] : [
     {
       q: 'Can anyone join the TrueDeal Global Franchise Plan from outside India?',
       a: 'Absolutely! While TrueDeal Global is proudly headquartered in Ghaziabad, India, our franchise network is truly international. We cater to prospective franchisees and corporate clients in the United States, United Arab Emirates (Dubai), Australia (Melbourne), Canada (Edmonton), Singapore, United Kingdom, and across Europe. Anyone around the world can register and operate a franchise remotely or locally.'
@@ -100,18 +126,36 @@ export function FranchisePlansView({
       <div className="text-center max-w-4xl mx-auto space-y-6">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-xs font-semibold text-indigo-700 dark:text-indigo-300 shadow-xs">
           <Globe className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-          <span>TrueDeal Global · Headquartered in India · Catering Worldwide</span>
+          <span>
+            {language === 'hi'
+              ? 'ट्रूडील ग्लोबल · मुख्यालय भारत · विश्वव्यापी सेवाएं'
+              : 'TrueDeal Global · Headquartered in India · Catering Worldwide'}
+          </span>
         </div>
 
         <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight text-slate-900 dark:text-slate-100 text-balance leading-tight">
-          Choose Your Official{' '}
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600">
-            Franchise Plan
-          </span>
+          {language === 'hi' ? (
+            <>
+              अपनी आधिकारिक{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600">
+                फ़्रैंचाइज़ी योजना
+              </span>{' '}
+              चुनें
+            </>
+          ) : (
+            <>
+              Choose Your Official{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600">
+                Franchise Plan
+              </span>
+            </>
+          )}
         </h1>
 
         <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 leading-relaxed max-w-3xl mx-auto text-balance">
-          Access over 20+ multi-industry business services under one umbrella. Low investment, lifetime validity, twice-weekly commission payouts up to 85%, and 20% direct referral bonuses. Anyone can join from anywhere across the globe.
+          {language === 'hi'
+            ? 'एक ही छतरी के नीचे 20 से 50+ बहु-उद्योग व्यावसायिक सेवाओं का संचालन करें। न्यूनतम निवेश, आजीवन वैधता, 85% तक कमीशन और 20% प्रत्यक्ष रेफरल बोनस। विश्व भर से कोई भी उद्यमी जुड़ सकता है।'
+            : 'Access over 20+ multi-industry business services under one umbrella. Low investment, lifetime validity, twice-weekly commission payouts up to 85%, and 20% direct referral bonuses. Anyone can join from anywhere across the globe.'}
         </p>
 
         {/* Currency Switcher & Surcharge Transparency Box */}
@@ -128,7 +172,9 @@ export function FranchisePlansView({
             >
               <span className="text-sm">🇮🇳</span>
               <span>Indian Rupees (INR ₹)</span>
-              <span className="text-[10px] font-normal opacity-75">Domestic</span>
+              <span className="text-[10px] font-normal opacity-75">
+                {language === 'hi' ? 'घरेलू' : 'Domestic'}
+              </span>
             </button>
             <button
               type="button"
@@ -142,7 +188,7 @@ export function FranchisePlansView({
               <span className="text-sm">🌐</span>
               <span>US Dollars (USD $)</span>
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
-                +10% Global Rate
+                {language === 'hi' ? '+10% अंतर्राष्ट्रीय दर' : '+10% Global Rate'}
               </span>
             </button>
           </div>
@@ -151,12 +197,21 @@ export function FranchisePlansView({
             <div className="text-xs text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/40 px-4 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-2 max-w-xl text-left animate-fade-in shadow-xs">
               <Sparkles className="w-4 h-4 shrink-0 text-amber-500" />
               <span>
-                <strong>International Currency Selected:</strong> Fees are calculated at 1 USD ≈ ₹{USD_INR_RATE.toFixed(2)} with standard +{USD_SURCHARGE_PCT}% international cross-border processing and global territory licensing markup.
+                <strong>
+                  {language === 'hi' ? 'अंतर्राष्ट्रीय मुद्रा चयनित:' : 'International Currency Selected:'}
+                </strong>{' '}
+                {language === 'hi'
+                  ? `शुल्क की गणना 1 USD ≈ ₹${USD_INR_RATE.toFixed(2)} पर +${USD_SURCHARGE_PCT}% अंतर्राष्ट्रीय विनियामक और क्रॉस-बॉर्डर प्रोसेसिंग दर के साथ की गई है।`
+                  : `Fees are calculated at 1 USD ≈ ₹${USD_INR_RATE.toFixed(2)} with standard +${USD_SURCHARGE_PCT}% international cross-border processing and global territory licensing markup.`}
               </span>
             </div>
           ) : (
             <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              <span>🇮🇳 Standard Domestic India joining fees. Direct IMPS/NEFT twice-weekly payouts.</span>
+              <span>
+                {language === 'hi'
+                  ? '🇮🇳 मानक घरेलू भारतीय शुल्क। प्रति सप्ताह दो बार सीधे IMPS/NEFT बैंक हस्तांतरण।'
+                  : '🇮🇳 Standard Domestic India joining fees. Direct IMPS/NEFT twice-weekly payouts.'}
+              </span>
             </p>
           )}
         </div>
@@ -164,17 +219,17 @@ export function FranchisePlansView({
         {/* Category Filters */}
         <div className="flex flex-wrap items-center justify-center gap-2 pt-3">
           {[
-            { id: 'all', label: 'All 8 Official Plans' },
-            { id: 'starter', label: 'Starter (Basic & Standard)' },
-            { id: 'growth', label: 'Corporate & Platinum' },
-            { id: 'authority', label: 'Entrepreneur & Retirement' },
-            { id: 'master', label: 'Enterprise & Global' },
+            { id: 'all', label: language === 'hi' ? 'सभी 8 आधिकारिक योजनाएं' : 'All 8 Official Plans' },
+            { id: 'starter', label: language === 'hi' ? 'स्टार्टर (बेसिक व स्टैंडर्ड)' : 'Starter (Basic & Standard)' },
+            { id: 'growth', label: language === 'hi' ? 'कॉर्पोरेट और प्लैटिनम' : 'Corporate & Platinum' },
+            { id: 'authority', label: language === 'hi' ? 'आंत्रप्रेन्योर और रिटायरमेंट' : 'Entrepreneur & Retirement' },
+            { id: 'master', label: language === 'hi' ? 'एंटरप्राइज और ग्लोबल' : 'Enterprise & Global' },
           ].map(f => (
             <button
               key={f.id}
               type="button"
               onClick={() => setFilterCategory(f.id as any)}
-              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+              className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
                 filterCategory === f.id
                   ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-sm'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 bg-slate-100/70 dark:bg-slate-800/50'
@@ -226,7 +281,7 @@ export function FranchisePlansView({
                 {/* Price Display */}
                 <div className="p-3.5 bg-slate-50 dark:bg-white/5 rounded-xl border border-slate-100 dark:border-white/10 mb-4 space-y-1">
                   <span className="text-[10px] text-slate-500 dark:text-gray-400 uppercase tracking-wider block font-semibold">
-                    Franchise Joining Fee
+                    {language === 'hi' ? 'फ़्रैंचाइज़ी प्रवेश शुल्क' : 'Franchise Joining Fee'}
                   </span>
                   <div className="flex items-baseline justify-between">
                     <span className="text-2xl sm:text-3xl font-black font-mono text-slate-900 dark:text-white">
@@ -237,9 +292,11 @@ export function FranchisePlansView({
                     </span>
                   </div>
                   <div className="text-[10px] text-slate-500 dark:text-gray-400 flex items-center justify-between pt-1">
-                    <span>One-time joining fee</span>
+                    <span>{language === 'hi' ? 'एकमुश्त प्रवेश शुल्क' : 'One-time joining fee'}</span>
                     {currency === 'USD' && (
-                      <span className="text-amber-500 font-semibold font-mono">+10% applied</span>
+                      <span className="text-amber-500 font-semibold font-mono">
+                        {language === 'hi' ? '+10% अंतर्राष्ट्रीय दर' : '+10% applied'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -248,17 +305,17 @@ export function FranchisePlansView({
                 <div className="space-y-2 mb-5 text-xs">
                   <div className="p-2.5 bg-slate-100/70 dark:bg-[#001a33] rounded-lg space-y-1">
                     <div className="flex justify-between">
-                      <span className="text-slate-500 dark:text-gray-400">Commission:</span>
+                      <span className="text-slate-500 dark:text-gray-400">{language === 'hi' ? 'कमीशन दर:' : 'Commission:'}</span>
                       <span className="font-bold text-emerald-600 dark:text-emerald-400">{plan.commissionRate}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-500 dark:text-gray-400">Referral Bonus:</span>
+                      <span className="text-slate-500 dark:text-gray-400">{language === 'hi' ? 'रेफरल बोनस:' : 'Referral Bonus:'}</span>
                       <span className="font-bold text-indigo-600 dark:text-indigo-300">{plan.referralBonus}</span>
                     </div>
                   </div>
 
                   <span className="text-[11px] font-bold text-slate-500 dark:text-gray-300 uppercase tracking-wider block pt-2">
-                    Included Features:
+                    {language === 'hi' ? 'शामिल विशेषताएं:' : 'Included Features:'}
                   </span>
                   <ul className="space-y-1.5 text-slate-700 dark:text-slate-200">
                     {plan.features.map((feat, idx) => (
@@ -281,9 +338,9 @@ export function FranchisePlansView({
                   }}
                   className={`w-full py-2.5 px-4 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm text-white ${
                     plan.btnColor || 'bg-indigo-600'
-                  } hover:brightness-110 active:scale-[0.98]`}
+                  } hover:brightness-110 active:scale-[0.98] cursor-pointer`}
                 >
-                  <span>Join {plan.title}</span>
+                  <span>{language === 'hi' ? `${plan.title} चुनें` : `Join ${plan.title}`}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -298,19 +355,21 @@ export function FranchisePlansView({
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
               <Calculator className="w-4 h-4" />
-              <span>Projected Earning Potential</span>
+              <span>{language === 'hi' ? 'अनुमानित आय क्षमता' : 'Projected Earning Potential'}</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
-              Interactive Franchise Revenue Estimator
+              {language === 'hi' ? 'इंटरैक्टिव फ़्रैंचाइज़ी राजस्व कैलकुलेटर' : 'Interactive Franchise Revenue Estimator'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
-              Simulate your earnings from selling web development, tours, visas, digital marketing, and real estate services. TrueDeal handles backend delivery.
+              {language === 'hi'
+                ? 'वेब विकास, टूर पैकेज, वीज़ा, डिजिटल मार्केटिंग और रियल एस्टेट से अपनी कमाई का अनुकरण करें। ट्रूडील बैकएंड डिलीवरी संभालता है।'
+                : 'Simulate your earnings from selling web development, tours, visas, digital marketing, and real estate services. TrueDeal handles backend delivery.'}
             </p>
           </div>
 
           <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300 px-3">
-              Currency: {currency === 'INR' ? '₹ INR' : '$ USD (+10%)'}
+              {language === 'hi' ? 'मुद्रा:' : 'Currency:'} {currency === 'INR' ? '₹ INR' : '$ USD (+10%)'}
             </span>
           </div>
         </div>
@@ -500,6 +559,55 @@ export function FranchisePlansView({
               <span className="text-[10px] text-slate-500 dark:text-gray-400 block">{loc.label}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Instant Consultation & Direct Helpline Bar */}
+      <div className="bg-gradient-to-r from-emerald-950/90 via-slate-900 to-indigo-950 p-6 sm:p-8 rounded-3xl border border-emerald-500/30 text-white shadow-xl relative overflow-hidden">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
+          <div className="space-y-1.5 text-center md:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-400/30">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Direct Franchise Support & WhatsApp Desk</span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-bold text-white">
+              Need Guidance Choosing Your Franchise Plan?
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-300 max-w-xl">
+              Connect directly with our senior corporate advisory team via WhatsApp, instant phone call, or email. We typically reply within 5 minutes.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 shrink-0">
+            {/* WhatsApp Button */}
+            <a
+              href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Global%20Team,%20I%20am%20interested%20in%20a%20franchise%20partnership.%20Please%20guide%20me."
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-2 shadow-lg transition-all hover:scale-105"
+            >
+              <WhatsAppIcon className="w-4 h-4 text-white" />
+              <span>WhatsApp: +91-8091667890</span>
+            </a>
+
+            {/* Phone Button */}
+            <a
+              href="tel:+919317194033"
+              className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-bold text-xs flex items-center gap-2 transition-all hover:bg-white/25"
+            >
+              <Phone className="w-4 h-4 text-amber-400" />
+              <span>Call: +91-9317194033</span>
+            </a>
+
+            {/* Email Button */}
+            <a
+              href="mailto:info@truedealglobal.com"
+              className="px-4 py-2.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-white font-bold text-xs flex items-center gap-2 transition-all"
+            >
+              <Mail className="w-4 h-4 text-white" />
+              <span>info@truedealglobal.com</span>
+            </a>
+          </div>
         </div>
       </div>
 

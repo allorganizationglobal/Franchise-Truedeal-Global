@@ -10,6 +10,7 @@ import { ApiDocsView } from './components/docs/ApiDocsView';
 import { SyncStatusMonitorModal } from './components/common/SyncStatusMonitorModal';
 import { EmailPreviewModal } from './components/common/EmailPreviewModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
+import { WhatsAppSupportWidget } from './components/common/WhatsAppSupportWidget';
 import { FranchiseStorageService } from './services/storage';
 import { NotificationService } from './services/notificationService';
 import { UserRole, AppNotification, FranchiseApplication, EmailNotification, SyncQueueItem, Currency } from './types/franchise';
@@ -219,6 +220,9 @@ export default function App() {
           setCurrentTab('tracker');
         }}
       />
+
+      {/* Instant WhatsApp & Helpline Floating Connector */}
+      <WhatsAppSupportWidget />
     </div>
   );
 }

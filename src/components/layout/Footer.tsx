@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { Currency } from '../../types/franchise';
+import { FRANCHISE_PLANS } from '../../services/storage';
+import { WhatsAppIcon } from '../common/WhatsAppSupportWidget';
+import { useLanguage } from '../../context/LanguageContext';
 
 interface FooterProps {
   currency: Currency;
@@ -39,6 +42,7 @@ export function Footer({
   emailsCount,
   syncQueueCount
 }: FooterProps) {
+  const { language, t } = useLanguage();
   const [copiedBank, setCopiedBank] = useState<string | null>(null);
 
   const copyToClipboard = (text: string, key: string) => {
@@ -58,15 +62,23 @@ export function Footer({
           <div className="space-y-3 text-center lg:text-left max-w-2xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/30 text-amber-300 text-xs font-bold tracking-wide">
               <Award className="w-3.5 h-3.5 text-amber-400" />
-              <span>Ranked #1 in India · Ranked Top 3 Worldwide</span>
+              <span>
+                {language === 'hi'
+                  ? 'भारत में रैंक #1 · दुनिया भर में शीर्ष 3'
+                  : 'Ranked #1 in India · Ranked Top 3 Worldwide'}
+              </span>
             </div>
 
             <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight leading-tight">
-              India's Premier Multi-Industry Franchise Conglomerate
+              {language === 'hi'
+                ? 'भारत का प्रमुख बहु-उद्योग फ़्रैंचाइज़ी समूह'
+                : "India's Premier Multi-Industry Franchise Conglomerate"}
             </h2>
 
             <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Empowering over 240+ franchise partners across India, the United States, UAE, Australia, and Europe with 20+ monetizable business verticals, lifetime validity, and guaranteed twice-weekly commission disbursements.
+              {language === 'hi'
+                ? 'भारत, संयुक्त राज्य अमेरिका, संयुक्त अरब अमीरात, ऑस्ट्रेलिया और यूरोप में 240+ से अधिक भागीदारों को 20+ मुद्रीकरण योग्य व्यावसायिक क्षेत्रों, आजीवन वैधता और द्वि-साप्ताहिक कमीशन वितरण के साथ सशक्त बनाना।'
+                : 'Empowering over 240+ franchise partners across India, the United States, UAE, Australia, and Europe with 20+ monetizable business verticals, lifetime validity, and guaranteed twice-weekly commission disbursements.'}
             </p>
           </div>
 
@@ -74,18 +86,18 @@ export function Footer({
             <button
               type="button"
               onClick={() => onSelectTab('apply')}
-              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all shadow-lg hover:shadow-amber-400/20 flex items-center gap-2 font-mono uppercase tracking-wider"
+              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm text-slate-950 bg-amber-400 hover:bg-amber-300 transition-all shadow-lg hover:shadow-amber-400/20 flex items-center gap-2 font-mono uppercase tracking-wider cursor-pointer"
             >
-              <span>Apply for Franchise</span>
+              <span>{language === 'hi' ? 'फ़्रैंचाइज़ी हेतु आवेदन करें' : 'Apply for Franchise'}</span>
               <ArrowRight className="w-4 h-4" />
             </button>
 
             <button
               type="button"
               onClick={() => onSelectTab('plans')}
-              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-white/10 hover:bg-white/20 border border-white/20 transition-all backdrop-blur-sm"
+              className="px-6 py-3 rounded-xl font-bold text-xs sm:text-sm text-white bg-white/10 hover:bg-white/20 border border-white/20 transition-all backdrop-blur-sm cursor-pointer"
             >
-              Explore 8 Official Plans
+              {language === 'hi' ? '8 आधिकारिक योजनाएं देखें' : 'Explore 8 Official Plans'}
             </button>
           </div>
         </div>
@@ -129,63 +141,25 @@ export function Footer({
               <Award className="w-4 h-4 text-amber-500" />
               <span>Franchise Plans</span>
             </h3>
-            <ul className="space-y-2.5 text-xs">
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Basic Starter Plan (₹11,000 / $138)
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Standard Franchise (₹21,000 / $264)
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Corporate Growth Partner (₹51,000 / $641)
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Platinum Authority (₹1,00,000 / $1,257)
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Entrepreneur Master (₹2,00,000 / $2,514)
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  onClick={() => onSelectTab('plans')}
-                  className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left"
-                >
-                  Global Master Franchise (₹5,00,000 / $6,285)
-                </button>
-              </li>
-              <li className="pt-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
-                ✓ Lifetime Validity & Zero Annual Royalties
+            <ul className="space-y-2 text-xs">
+              {FRANCHISE_PLANS.map((plan) => (
+                <li key={plan.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectTab('plans')}
+                    className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors text-left flex items-center justify-between w-full group py-0.5"
+                  >
+                    <span className="group-hover:underline font-medium text-slate-800 dark:text-slate-200">
+                      {plan.title}
+                    </span>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono ml-1 shrink-0">
+                      (₹{plan.priceINR.toLocaleString('en-IN')} / ${plan.priceUSD.toLocaleString('en-US')})
+                    </span>
+                  </button>
+                </li>
+              ))}
+              <li className="pt-2 text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold border-t border-slate-200/60 dark:border-slate-800/60 flex items-center gap-1">
+                <span>✓ Lifetime Validity & Zero Annual Royalties</span>
               </li>
             </ul>
           </div>
@@ -364,16 +338,36 @@ export function Footer({
                   <span>REST API & Webhook Specs</span>
                 </button>
               </li>
-              <li className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <li className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1">
                 <span className="text-[10px] text-slate-400 block font-semibold">Direct Corporate Line:</span>
-                <a href="tel:+911204000800" className="text-slate-900 dark:text-slate-100 font-mono font-bold hover:text-indigo-600">
-                  +91 (0) 120 4000 800
+                <a
+                  href="tel:+919317194033"
+                  className="text-slate-900 dark:text-slate-100 font-mono font-bold hover:text-amber-500 flex items-center gap-1.5 transition-colors"
+                >
+                  <Phone className="w-3.5 h-3.5 text-amber-500" />
+                  <span>+91-9317194033</span>
                 </a>
               </li>
-              <li>
+              <li className="space-y-1">
+                <span className="text-[10px] text-slate-400 block font-semibold">Official WhatsApp Desk:</span>
+                <a
+                  href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Global%20Team,%20I%20am%20interested%20in%20a%20franchise%20partnership.%20Please%20guide%20me."
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-emerald-600 dark:text-emerald-400 font-mono font-bold hover:underline flex items-center gap-1.5 transition-colors"
+                >
+                  <WhatsAppIcon className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>+91-8091667890 (Chat Instant)</span>
+                </a>
+              </li>
+              <li className="space-y-1">
                 <span className="text-[10px] text-slate-400 block font-semibold">Franchise Directorate Email:</span>
-                <a href="mailto:support@truedealglobal.com" className="text-slate-900 dark:text-slate-100 font-medium hover:text-indigo-600">
-                  support@truedealglobal.com
+                <a
+                  href="mailto:info@truedealglobal.com"
+                  className="text-slate-900 dark:text-slate-100 font-medium hover:text-indigo-600 flex items-center gap-1.5 transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>info@truedealglobal.com</span>
                 </a>
               </li>
             </ul>

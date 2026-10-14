@@ -13,6 +13,7 @@ import {
   Currency
 } from '../types/franchise';
 import { calculateSha256, generateAuditChecksum } from '../utils/crypto';
+import { syncApplicationToFirestore } from './firebase';
 
 // Live Foreign Exchange & Surcharge Configuration
 export const USD_INR_RATE = 87.5; // Base market exchange rate (1 USD = 87.5 INR)
@@ -1010,6 +1011,9 @@ export class FranchiseStorageService {
       apps.unshift(app);
     }
     localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+
+    // Cloud persistence via Firebase Firestore
+    syncApplicationToFirestore(app).catch(() => {});
 
     if (this.isSimulatedOffline()) {
       this.enqueueSyncItem({
