@@ -27,13 +27,24 @@ import { DocumentViewerModal } from '../common/DocumentViewerModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
 
+import { User as FirebaseUser } from 'firebase/auth';
+import { isUserAdmin } from '../../services/firebase';
+
 interface AdminDashboardProps {
   userRole: UserRole;
+  currentUser?: FirebaseUser | null;
+  onSignInGoogle?: () => void;
   onRefresh: () => void;
   onSelectApplication: (id: string) => void;
 }
 
-export function AdminDashboard({ userRole, onRefresh, onSelectApplication }: AdminDashboardProps) {
+export function AdminDashboard({
+  userRole,
+  currentUser,
+  onSignInGoogle,
+  onRefresh,
+  onSelectApplication
+}: AdminDashboardProps) {
   const [applications, setApplications] = useState<FranchiseApplication[]>(
     FranchiseStorageService.getApplications()
   );
@@ -142,6 +153,46 @@ export function AdminDashboard({ userRole, onRefresh, onSelectApplication }: Adm
     { id: 'approved', title: 'Director Approved & LOI', statuses: ['approved'] },
     { id: 'active', title: 'Agreement Executed & Onboarded', statuses: ['contract_issued', 'deposit_paid', 'onboarded'] },
   ];
+
+  // Executive Authentication & Authorization Gate
+  const isAdminAuthorized = currentUser && isUserAdmin(currentUser.email);
+
+  if (!isAdminAuthorized) {
+    return (
+      <div className="max-w-2xl mx-auto py-16 px-4 text-center space-y-6">
+        <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center mx-auto text-indigo-600 dark:text-indigo-400 shadow-md">
+          <Lock className="w-8 h-8" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+            Administrative Access Restricted
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+            The Franchise Application Pipeline and Oversight Console require authenticated director credentials.
+          </p>
+        </div>
+
+        {currentUser ? (
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs text-amber-800 dark:text-amber-300 max-w-md mx-auto space-y-1">
+            <p className="font-semibold">Signed in as: {currentUser.email}</p>
+            <p>This account does not possess Director or Executive authorization. Please sign in with an authorized TrueDeal administrator email.</p>
+          </div>
+        ) : (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onSignInGoogle}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Sign In with Corporate Account</span>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-6">

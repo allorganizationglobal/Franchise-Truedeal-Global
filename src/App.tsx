@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { auth, signInWithGoogle, signOutUser } from './services/firebase';
+import { auth, signInWithGoogle, signOutUser, isUserAdmin, fetchApplicationsFromFirestore } from './services/firebase';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { FranchisePlansView } from './components/portal/FranchisePlansView';
@@ -81,10 +81,21 @@ export default function App() {
     };
   }, []);
 
-  // Firebase Authentication State Listener
+  // Firebase Authentication State Listener & Live Database Hydration
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
+      if (user && isUserAdmin(user.email)) {
+        try {
+          const remoteApps = await fetchApplicationsFromFirestore();
+          if (remoteApps && remoteApps.length > 0) {
+            remoteApps.forEach(app => FranchiseStorageService.saveApplication(app, false));
+            refreshAllData();
+          }
+        } catch (err) {
+          console.warn('Could not sync remote Firestore applications:', err);
+        }
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -202,6 +213,8 @@ export default function App() {
         {currentTab === 'admin' && (
           <AdminDashboard
             userRole={userRole}
+            currentUser={currentUser}
+            onSignInGoogle={handleSignInGoogle}
             onRefresh={refreshAllData}
             onSelectApplication={(id) => {
               setSelectedAppId(id);

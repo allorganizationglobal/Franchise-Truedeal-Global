@@ -1,9 +1,10 @@
-import { useState } from 'react';
-import { RefreshCw, Wifi, WifiOff, ShieldCheck, AlertTriangle, CheckCircle2, Clock, X, Zap } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { RefreshCw, Wifi, WifiOff, ShieldCheck, AlertTriangle, CheckCircle2, Clock, X, Zap, Database, Activity, Server } from 'lucide-react';
 import { SyncQueueItem } from '../../types/franchise';
 import { FranchiseStorageService } from '../../services/storage';
 import { NotificationService } from '../../services/notificationService';
 import { playApprovalSuccessSound } from '../../utils/audio';
+import { pingFirestoreDatabase, firestoreInfo } from '../../services/firebase';
 
 interface SyncStatusMonitorModalProps {
   isOpen: boolean;
@@ -23,12 +24,44 @@ export function SyncStatusMonitorModal({
   onSyncComplete
 }: SyncStatusMonitorModalProps) {
   const [syncing, setSyncing] = useState(false);
+  const [pinging, setPinging] = useState(false);
+  const [dbPingResult, setDbPingResult] = useState<{
+    success: boolean;
+    latencyMs: number;
+    message: string;
+    databaseId: string;
+    projectId: string;
+  } | null>(null);
   const [conflictPolicy, setConflictPolicy] = useState<'server_wins' | 'client_wins' | 'timestamp_merge'>('timestamp_merge');
   const [lastSyncResult, setLastSyncResult] = useState<{
     successCount: number;
     failedCount: number;
     errors: string[];
   } | null>(null);
+
+  useEffect(() => {
+    if (isOpen && !isOffline && !dbPingResult) {
+      handlePingDatabase();
+    }
+  }, [isOpen, isOffline]);
+
+  const handlePingDatabase = async () => {
+    setPinging(true);
+    try {
+      const res = await pingFirestoreDatabase();
+      setDbPingResult(res);
+    } catch (e) {
+      setDbPingResult({
+        success: false,
+        latencyMs: 0,
+        message: 'Ping failed',
+        databaseId: firestoreInfo.databaseId,
+        projectId: firestoreInfo.projectId
+      });
+    } finally {
+      setPinging(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -132,6 +165,79 @@ export function SyncStatusMonitorModal({
               </span>
             </div>
           </div>
+        </div>
+
+        {/* Cloud Firestore Database Infrastructure Status */}
+        <div className="p-4 bg-slate-900 text-slate-100 rounded-xl border border-slate-800 shadow-md mb-5">
+          <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-slate-800">
+            <div className="flex items-center gap-2">
+              <Database className="w-4 h-4 text-amber-400" />
+              <span className="text-xs font-semibold tracking-wide uppercase text-amber-400">
+                Cloud Firestore Database
+              </span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-400 border border-emerald-800">
+                PROVISIONED
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handlePingDatabase}
+              disabled={pinging || isOffline}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <Activity className={`w-3.5 h-3.5 text-emerald-400 ${pinging ? 'animate-spin' : ''}`} />
+              <span>{pinging ? 'Testing...' : 'Ping Database'}</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+            <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+              <span className="text-[10px] text-slate-400 uppercase font-mono block">Database ID</span>
+              <span className="font-mono text-[11px] text-slate-200 truncate block" title={firestoreInfo.databaseId}>
+                {firestoreInfo.databaseId}
+              </span>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+              <span className="text-[10px] text-slate-400 uppercase font-mono block">GCP Project</span>
+              <span className="font-mono text-[11px] text-slate-200 truncate block">
+                {firestoreInfo.projectId}
+              </span>
+            </div>
+          </div>
+
+          {/* Active Collections */}
+          <div className="mt-3 pt-2.5 border-t border-slate-800/80">
+            <span className="text-[10px] text-slate-400 uppercase font-mono block mb-1.5">
+              Managed Collections ({firestoreInfo.collections.length})
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {firestoreInfo.collections.map((col) => (
+                <span
+                  key={col.name}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-800 text-slate-300 border border-slate-700/80 flex items-center gap-1"
+                  title={col.desc}
+                >
+                  <Server className="w-2.5 h-2.5 text-amber-400" />
+                  <span>/{col.name}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Ping Results */}
+          {dbPingResult && (
+            <div className="mt-3 p-2 rounded-lg text-xs bg-slate-950 border border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`w-2 h-2 rounded-full ${dbPingResult.success ? 'bg-emerald-400 animate-pulse' : 'bg-rose-400'}`} />
+                <span className="text-[11px] text-slate-300">{dbPingResult.message}</span>
+              </div>
+              {dbPingResult.success && (
+                <span className="font-mono text-[10px] text-emerald-400 font-bold bg-emerald-950/60 px-1.5 py-0.5 rounded border border-emerald-800/80">
+                  {dbPingResult.latencyMs} ms
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Conflict Resolution Selector */}

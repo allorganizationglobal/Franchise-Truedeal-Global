@@ -10,16 +10,64 @@ import {
   FileSpreadsheet,
   FileText,
   Search,
-  Filter
+  Filter,
+  Lock
 } from 'lucide-react';
+import { User as FirebaseUser } from 'firebase/auth';
+import { isUserAdmin } from '../../services/firebase';
 import { FranchiseStorageService, getPlanById } from '../../services/storage';
 import { FranchiseApplication, AuditLogEntry } from '../../types/franchise';
 
-export function AnalyticsView() {
+interface AnalyticsViewProps {
+  currentUser?: FirebaseUser | null;
+  onSignInGoogle?: () => void;
+}
+
+export function AnalyticsView({ currentUser, onSignInGoogle }: AnalyticsViewProps = {}) {
   const applications = FranchiseStorageService.getApplications();
   const [activeSubTab, setActiveSubTab] = useState<'kpis' | 'audit_log'>('kpis');
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(FranchiseStorageService.getAuditLogs());
   const [auditSearch, setAuditSearch] = useState('');
+
+  // Executive Authentication & Authorization Gate
+  const isAdminAuthorized = currentUser && isUserAdmin(currentUser.email);
+
+  if (!isAdminAuthorized) {
+    return (
+      <div className="max-w-2xl mx-auto py-16 px-4 text-center space-y-6">
+        <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center mx-auto text-indigo-600 dark:text-indigo-400 shadow-md">
+          <Lock className="w-8 h-8" />
+        </div>
+
+        <div className="space-y-2">
+          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+            Audit Ledger Access Restricted
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
+            Enterprise analytics, conversion funnels, and tamper-evident audit logs require authenticated director credentials.
+          </p>
+        </div>
+
+        {currentUser ? (
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl text-xs text-amber-800 dark:text-amber-300 max-w-md mx-auto space-y-1">
+            <p className="font-semibold">Signed in as: {currentUser.email}</p>
+            <p>This account does not possess Director authorization. Please sign in with an authorized TrueDeal administrator email.</p>
+          </div>
+        ) : (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={onSignInGoogle}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Sign In with Corporate Account</span>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   // Key KPI Calculations
   const totalPipelineValue = applications.reduce((acc, app) => {

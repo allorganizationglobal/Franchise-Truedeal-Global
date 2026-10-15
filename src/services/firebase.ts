@@ -45,20 +45,69 @@ export async function signOutUser(): Promise<void> {
   await signOut(auth);
 }
 
-// Connection test on boot as required by Firebase integration guidelines
-export async function testConnection(): Promise<boolean> {
+// Database Metadata & Configuration
+export const firestoreInfo = {
+  projectId: firebaseConfig.projectId,
+  databaseId: firebaseConfig.firestoreDatabaseId || '(default)',
+  authDomain: firebaseConfig.authDomain,
+  collections: [
+    { name: 'applications', desc: 'Franchise Partner Applications' },
+    { name: 'audit_logs', desc: 'Immutable Security Audit Logs' },
+    { name: 'users', desc: 'Authorized Administrator & User Accounts' },
+    { name: 'test', desc: 'Heartbeat & Connection Probes' }
+  ]
+};
+
+// Ping Firestore Database with latency measurement
+export async function pingFirestoreDatabase(): Promise<{
+  success: boolean;
+  latencyMs: number;
+  message: string;
+  databaseId: string;
+  projectId: string;
+}> {
+  const startTime = Date.now();
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-    return true;
+    const latencyMs = Date.now() - startTime;
+    return {
+      success: true,
+      latencyMs,
+      message: `Database connection verified (${latencyMs}ms)`,
+      databaseId: firestoreInfo.databaseId,
+      projectId: firestoreInfo.projectId
+    };
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firebase client offline. Operating in resilient offline cache mode.');
-    }
-    return false;
+    const latencyMs = Date.now() - startTime;
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      latencyMs,
+      message: msg.includes('offline') ? 'Database client offline (resilient cache active)' : msg,
+      databaseId: firestoreInfo.databaseId,
+      projectId: firestoreInfo.projectId
+    };
   }
 }
 
-// Background sync to Firestore
+// Connection test on boot as required by Firebase integration guidelines
+export async function testConnection(): Promise<boolean> {
+  const result = await pingFirestoreDatabase();
+  return result.success;
+}
+
+// Helper to check if email is an authorized administrator
+export function isUserAdmin(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.toLowerCase().trim();
+  return (
+    normalized === 'allorganizationglobal@gmail.com' ||
+    normalized === 'director@truedealglobal.com' ||
+    normalized.endsWith('@truedealglobal.com')
+  );
+}
+
+// Background sync to Firestore for applications
 export async function syncApplicationToFirestore(application: FranchiseApplication): Promise<boolean> {
   try {
     const docRef = doc(db, 'applications', application.id);
@@ -73,7 +122,31 @@ export async function syncApplicationToFirestore(application: FranchiseApplicati
   }
 }
 
-// Fetch all applications from Firestore
+// Background sync to Firestore for audit logs
+export async function syncAuditLogToFirestore(log: {
+  id: string;
+  timestamp: string;
+  action: string;
+  resourceId?: string;
+  details: string;
+  userRole?: string;
+  userEmail?: string;
+  checksum?: string;
+}): Promise<boolean> {
+  try {
+    const docRef = doc(db, 'audit_logs', log.id);
+    await setDoc(docRef, {
+      ...log,
+      _syncedAt: new Date().toISOString()
+    });
+    return true;
+  } catch (err) {
+    console.warn('Could not sync audit log to Firestore:', err);
+    return false;
+  }
+}
+
+// Fetch all applications from Firestore (Authorized Admin)
 export async function fetchApplicationsFromFirestore(): Promise<FranchiseApplication[]> {
   try {
     const snapshot = await getDocs(collection(db, 'applications'));
@@ -83,7 +156,7 @@ export async function fetchApplicationsFromFirestore(): Promise<FranchiseApplica
     });
     return items;
   } catch (err) {
-    console.warn('Could not fetch from Firestore, falling back to local storage:', err);
+    console.warn('Could not fetch from Firestore (permission or offline):', err);
     return [];
   }
 }

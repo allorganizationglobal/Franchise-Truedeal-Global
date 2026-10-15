@@ -1,35 +1,65 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper function to validate alphanumeric IDs
-    function isValidId(docId) {
-      return docId is string && docId.size() > 0 && docId.size() <= 128;
+    
+    // Helper: Check if user is authenticated with Firebase Auth
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // Franchise Applications
+    // Helper: Check if user is an authorized TrueDeal Global administrator
+    function isAuthorizedAdmin() {
+      return isAuthenticated() && 
+        (request.auth.token.email == 'allorganizationglobal@gmail.com' ||
+         request.auth.token.email == 'director@truedealglobal.com' ||
+         request.auth.token.email.matches('.*@truedealglobal[.]com'));
+    }
+
+    // Helper: Validate application document structure on creation by public visitors
+    function isValidApplicationSubmission() {
+      let data = request.resource.data;
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
+             data.applicant is map &&
+             data.applicant.fullName is string && data.applicant.fullName.size() >= 2 &&
+             data.applicant.email is string && data.applicant.email.size() >= 5 &&
+             data.applicant.phone is string && data.applicant.phone.size() >= 8 &&
+             data.planId is string &&
+             data.status in ['submitted', 'automated_verified', 'draft'] &&
+             data.createdAt is string;
+    }
+
+    // 1. Franchise Applications Collection
     match /applications/{applicationId} {
-      allow read: if true;
-      allow create: if isValidId(applicationId);
-      allow update: if isValidId(applicationId);
+      // Only authorized administrators can read applications list and details
+      allow read: if isAuthorizedAdmin();
+      
+      // Public visitors can only submit a valid, well-formed new application
+      allow create: if isValidApplicationSubmission();
+      
+      // Only authorized administrators can update status, add review notes, or approve
+      allow update: if isAuthorizedAdmin();
+      
+      // Applications cannot be deleted
       allow delete: if false;
     }
 
-    // Audit logs collection - append only
+    // 2. Audit Trail Logs - Immutable & restricted to administrators
     match /audit_logs/{auditId} {
-      allow read: if true;
-      allow create: if isValidId(auditId);
+      allow read: if isAuthorizedAdmin();
+      allow create: if isAuthorizedAdmin() || isAuthenticated();
       allow update, delete: if false;
     }
 
-    // User Profiles & Auth state
+    // 3. User Profiles
     match /users/{userId} {
-      allow read: if true;
-      allow write: if isValidId(userId);
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAuthorizedAdmin());
+      allow write: if isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Connection testing
+    // 4. Connection Probe Doc
     match /test/{docId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAuthorizedAdmin();
     }
   }
 }

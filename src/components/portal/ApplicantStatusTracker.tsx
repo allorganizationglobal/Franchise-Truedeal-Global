@@ -43,6 +43,8 @@ export function ApplicantStatusTracker({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
+  const [searchId, setSearchId] = useState('');
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   if (!currentApp) {
     return (
@@ -134,23 +136,51 @@ export function ApplicantStatusTracker({
           </h1>
         </div>
 
-        {/* Switch Application selector */}
-        {applications.length > 1 && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-slate-400">Switch Application:</span>
-            <select
-              value={currentApp.id}
-              onChange={e => onSelectApplication(e.target.value)}
-              className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 focus:outline-none"
+        {/* Secure Application Ref ID Lookup */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              placeholder="Enter Ref ID (e.g. TDG-2026-104)"
+              value={searchId}
+              onChange={e => {
+                setSearchId(e.target.value);
+                if (searchError) setSearchError(null);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && searchId.trim()) {
+                  const found = applications.find(a => a.id.toLowerCase() === searchId.trim().toLowerCase());
+                  if (found) {
+                    onSelectApplication(found.id);
+                    setSearchError(null);
+                  } else {
+                    setSearchError('Reference ID not found');
+                  }
+                }
+              }}
+              className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 focus:outline-none w-52 font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (!searchId.trim()) return;
+                const found = applications.find(a => a.id.toLowerCase() === searchId.trim().toLowerCase());
+                if (found) {
+                  onSelectApplication(found.id);
+                  setSearchError(null);
+                } else {
+                  setSearchError('Reference ID not found');
+                }
+              }}
+              className="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors cursor-pointer"
             >
-              {applications.map(app => (
-                <option key={app.id} value={app.id}>
-                  {app.id} - {app.applicant.fullName} ({app.status})
-                </option>
-              ))}
-            </select>
+              Track
+            </button>
           </div>
-        )}
+          {searchError && (
+            <span className="text-[10px] text-rose-500 font-semibold">{searchError}</span>
+          )}
+        </div>
       </div>
 
       {/* Multi-Stage Visual Onboarding Pipeline */}
