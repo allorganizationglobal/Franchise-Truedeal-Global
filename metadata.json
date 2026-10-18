@@ -1,6 +1,6 @@
 {
   "name": "TrueDeal Global Franchise Plan Portal",
-  "description": "Enterprise franchise registration and onboarding platform featuring automated approval scoring, secure document encryption, integrated payments, real-time tracking, biometric verification, and offline sync.",
+  "description": "Explore TRUEDEAL GLOBAL franchise opportunities, compare available plans, understand eligibility and application steps, and enquire about becoming a franchise partner.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

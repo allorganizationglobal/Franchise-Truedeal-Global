@@ -29,7 +29,7 @@ import {
   Currency
 } from '../../types/franchise';
 import { FRANCHISE_PLANS, evaluateFranchiseApplication, FranchiseStorageService, USD_INR_RATE, USD_SURCHARGE_PCT } from '../../services/storage';
-import { encryptFilePayload } from '../../utils/crypto';
+import { encryptFilePayload, validateUploadFile } from '../../utils/crypto';
 import { NotificationService } from '../../services/notificationService';
 import { PaymentModal } from '../common/PaymentModal';
 import { BiometricSetupModal } from '../common/BiometricSetupModal';
@@ -92,6 +92,16 @@ export function ApplicationWizard({
   const [encryptingDoc, setEncryptingDoc] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedDocType, setSelectedDocType] = useState<DocumentUpload['type']>('gov_id');
+  const [fileUploadError, setFileUploadError] = useState<string | null>(null);
+
+  // Draft Management State
+  const [savedDraftExists, setSavedDraftExists] = useState<boolean>(false);
+  const [savedDraftDate, setSavedDraftDate] = useState<string | null>(null);
+
+  // Legal Consent & Duplicate Prevention
+  const [consentAccuracy, setConsentAccuracy] = useState<boolean>(false);
+  const [consentTerms, setConsentTerms] = useState<boolean>(false);
+  const [duplicateAppWarning, setDuplicateAppWarning] = useState<{ id: string; status: string } | null>(null);
 
   // Payment
   const [paymentCompleted, setPaymentCompleted] = useState<boolean>(false);
@@ -104,10 +114,98 @@ export function ApplicationWizard({
 
   const selectedPlan = FRANCHISE_PLANS.find(p => p.id === selectedPlanId) || FRANCHISE_PLANS[0];
 
-  // Document upload with client-side WebCrypto AES-GCM-256 encryption
+  // Detect saved draft on mount
+  useEffect(() => {
+    try {
+      const draftStr = localStorage.getItem('truedeal_franchise_draft');
+      if (draftStr) {
+        const draft = JSON.parse(draftStr);
+        if (draft && draft.fullName) {
+          setSavedDraftExists(true);
+          setSavedDraftDate(draft.savedAt ? new Date(draft.savedAt).toLocaleDateString() : 'recent session');
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleSaveDraft = () => {
+    const draftPayload = {
+      savedAt: new Date().toISOString(),
+      currentStep,
+      selectedPlanId,
+      currentCurrency,
+      territoryRequested,
+      preferredStartDate,
+      fullName,
+      email,
+      phone,
+      companyName,
+      entityType,
+      country,
+      stateProvince,
+      city,
+      postalCode,
+      liquidCapital,
+      netWorth,
+      creditScoreTier,
+      fundingSource,
+      operationalExperienceYears,
+      businessBackgroundSummary
+    };
+    try {
+      localStorage.setItem('truedeal_franchise_draft', JSON.stringify(draftPayload));
+      NotificationService.addNotification(
+        'Application Draft Saved',
+        'Your registration progress has been saved securely to your browser storage. You can resume anytime.',
+        'success'
+      );
+    } catch (e) {
+      NotificationService.addNotification('Save Draft Failed', 'Storage quota exceeded.', 'error');
+    }
+  };
+
+  const handleResumeDraft = () => {
+    try {
+      const draftStr = localStorage.getItem('truedeal_franchise_draft');
+      if (!draftStr) return;
+      const draft = JSON.parse(draftStr);
+      if (draft.fullName) setFullName(draft.fullName);
+      if (draft.email) setEmail(draft.email);
+      if (draft.phone) setPhone(draft.phone);
+      if (draft.companyName !== undefined) setCompanyName(draft.companyName);
+      if (draft.entityType) setEntityType(draft.entityType);
+      if (draft.country) setCountry(draft.country);
+      if (draft.stateProvince) setStateProvince(draft.stateProvince);
+      if (draft.city) setCity(draft.city);
+      if (draft.postalCode) setPostalCode(draft.postalCode);
+      if (draft.territoryRequested) setTerritoryRequested(draft.territoryRequested);
+      if (draft.preferredStartDate) setPreferredStartDate(draft.preferredStartDate);
+      if (draft.selectedPlanId) setSelectedPlanId(draft.selectedPlanId);
+      if (draft.currentStep) setCurrentStep(draft.currentStep);
+      setSavedDraftExists(false);
+      NotificationService.addNotification('Draft Loaded', 'Your saved registration progress has been restored.', 'info');
+    } catch {}
+  };
+
+  const handleDiscardDraft = () => {
+    localStorage.removeItem('truedeal_franchise_draft');
+    setSavedDraftExists(false);
+  };
+
+  // Secure Document upload with strict magic byte validation & WebCrypto AES-GCM-256 encryption
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setFileUploadError(null);
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // 1. Strict binary header & extension security validation
+    const validation = await validateUploadFile(file);
+    if (!validation.valid) {
+      setFileUploadError(validation.error || 'Invalid file format or header signature.');
+      NotificationService.addNotification('Upload Rejected', validation.error || 'Invalid file', 'error');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
 
     setEncryptingDoc(true);
     try {
@@ -117,9 +215,9 @@ export function ApplicationWizard({
       const newDoc: DocumentUpload = {
         id: 'doc_' + Math.random().toString(36).substring(2, 9),
         type: selectedDocType,
-        name: file.name + '.enc',
+        name: (validation.sanitizedName || file.name) + '.enc',
         sizeBytes: file.size,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: validation.detectedMimeType || file.type || 'application/octet-stream',
         uploadedAt: new Date().toISOString(),
         status: 'pending_audit',
         isEncrypted: true,
@@ -131,11 +229,12 @@ export function ApplicationWizard({
       setDocuments(prev => [...prev, newDoc]);
       NotificationService.addNotification(
         'Document Encrypted & Vaulted',
-        `File ${file.name} encrypted with AES-GCM-256 (Checksum: ${encryptionResult.cipherChecksum.substring(0, 10)}...)`,
+        `File ${file.name} validated & encrypted with AES-GCM-256 (Checksum: ${encryptionResult.cipherChecksum.substring(0, 10)}...)`,
         'success'
       );
-    } catch (err) {
-      console.error('Encryption failed:', err);
+    } catch (err: any) {
+      console.warn('Encryption warning:', err);
+      setFileUploadError('Encryption failed. Please retry with a valid document.');
     } finally {
       setEncryptingDoc(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -240,6 +339,66 @@ export function ApplicationWizard({
           />
         </div>
       </div>
+
+      {/* Saved Draft Alert Banner */}
+      {savedDraftExists && (
+        <div className="mb-6 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs animate-fade-in">
+          <div className="flex items-center gap-2.5 text-amber-900 dark:text-amber-200">
+            <Clock className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              <strong>Saved Application Draft Found</strong> (from {savedDraftDate}). Would you like to resume where you left off?
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleResumeDraft}
+              className="px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold transition-colors shadow-xs cursor-pointer"
+            >
+              Resume Draft
+            </button>
+            <button
+              type="button"
+              onClick={handleDiscardDraft}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 font-semibold transition-colors cursor-pointer"
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Application Warning */}
+      {duplicateAppWarning && (
+        <div className="mb-6 p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs text-indigo-900 dark:text-indigo-200 space-y-2 animate-fade-in">
+          <div className="flex items-center gap-2 font-semibold text-sm">
+            <AlertCircle className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <span>Existing Active Application ({duplicateAppWarning.id})</span>
+          </div>
+          <p>
+            An active franchise registration associated with <strong>{email}</strong> is already recorded in the portal (Status: <span className="capitalize font-semibold">{duplicateAppWarning.status.replace(/_/g, ' ')}</span>).
+          </p>
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => onNavigateToTracker(duplicateAppWarning.id)}
+              className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-colors cursor-pointer"
+            >
+              Track Existing Application
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDuplicateAppWarning(null);
+                handleFinalSubmit();
+              }}
+              className="px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 font-medium hover:bg-indigo-100/50 cursor-pointer"
+            >
+              Submit Supplementary Application
+            </button>
+          </div>
+        </div>
+      )}
 
       {!submissionResult ? (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xl p-6 sm:p-8">
@@ -1002,51 +1161,93 @@ export function ApplicationWizard({
                   </span>
                 </div>
               </div>
+
+              {/* Mandatory Legal & Accuracy Certification */}
+              <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  Applicant Declarations & Consent
+                </h4>
+                <label className="flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentAccuracy}
+                    onChange={e => setConsentAccuracy(e.target.checked)}
+                    className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>
+                    <strong>Truth & Accuracy Certification:</strong> I certify that all details, financial declarations, and uploaded identification documents submitted are authentic, current, and verifiable.
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentTerms}
+                    onChange={e => setConsentTerms(e.target.checked)}
+                    className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>
+                    <strong>Evaluation & Communication Consent:</strong> I agree to TRUEDEAL GLOBAL's background verification checks and consent to receiving official onboarding communications via WhatsApp, Email, and Phone.
+                  </span>
+                </label>
+              </div>
             </div>
           )}
 
           {/* Wizard Controls */}
-          <div className="flex items-center justify-between pt-6 mt-6 border-t border-slate-100 dark:border-slate-800">
-            {currentStep > 1 ? (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-6 mt-6 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+              {currentStep > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(prev => prev - 1)}
+                  className="py-2.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>Back</span>
+                </button>
+              )}
+              
               <button
                 type="button"
-                onClick={() => setCurrentStep(prev => prev - 1)}
-                className="py-2.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors flex items-center gap-1.5"
+                onClick={handleSaveDraft}
+                className="py-2 px-3 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 text-xs font-medium rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
               >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span>Back</span>
+                <Clock className="w-3.5 h-3.5" />
+                <span>Save Draft</span>
               </button>
-            ) : <div />}
+            </div>
 
-            {currentStep < 6 ? (
-              <button
-                type="button"
-                onClick={() => setCurrentStep(prev => prev + 1)}
-                className="py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-all shadow-sm flex items-center gap-1.5"
-              >
-                <span>Continue</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleFinalSubmit}
-                className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Submitting Application...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Submit Franchise Application</span>
-                  </>
-                )}
-              </button>
-            )}
+            <div className="w-full sm:w-auto flex justify-end">
+              {currentStep < 6 ? (
+                <button
+                  type="button"
+                  onClick={() => setCurrentStep(prev => prev + 1)}
+                  className="w-full sm:w-auto py-2.5 px-5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <span>Continue</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSubmitting || !consentAccuracy || !consentTerms}
+                  onClick={handleFinalSubmit}
+                  className="w-full sm:w-auto py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Submitting Application...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Submit Franchise Application</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       ) : (

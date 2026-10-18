@@ -77,6 +77,12 @@ export function PaymentModal({
     e.preventDefault();
     setProcessing(true);
 
+    const isOfflineBankTransfer = method === 'upi' || method === 'netbanking' || method === 'escrow_wire';
+    const paymentStatus: 'completed' | 'processing' = isOfflineBankTransfer ? 'processing' : 'completed';
+    const effectiveRef = utrNumber.trim()
+      ? utrNumber.trim().toUpperCase()
+      : `TDG-${paymentType === 'application_fee' ? 'FEE' : 'PLAN'}-${application.id.replace('TDG-2026-', '')}`;
+
     setTimeout(() => {
       setProcessing(false);
       const newPayment: PaymentRecord = {
@@ -86,9 +92,9 @@ export function PaymentModal({
         amount,
         currency,
         method: (method === 'upi' || method === 'netbanking') ? 'ach' : method,
-        status: 'completed',
+        status: paymentStatus,
         transactionHash: 'tx_0x' + Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, '0')).join(''),
-        referenceCode: `TDG-${paymentType === 'application_fee' ? 'FEE' : 'PLAN'}-${application.id.replace('TDG-2026-', '')}`,
+        referenceCode: effectiveRef,
         timestamp: new Date().toISOString(),
         receiptNumber: 'REC-2026-' + Math.floor(1000 + Math.random() * 9000),
         cardLast4: method === 'card' ? cardNumber.slice(-4) : undefined,
@@ -98,22 +104,41 @@ export function PaymentModal({
       FranchiseStorageService.addPayment(application.id, newPayment);
 
       if (paymentType === 'franchise_deposit') {
-        FranchiseStorageService.updateApplicationStatus(
-          application.id,
-          'deposit_paid',
-          application.applicant.email,
-          'applicant',
-          `Franchise joining fee ${currencySymbol}${amount.toLocaleString()} cleared successfully.`
-        );
+        if (paymentStatus === 'completed') {
+          FranchiseStorageService.updateApplicationStatus(
+            application.id,
+            'deposit_paid',
+            application.applicant.email,
+            'applicant',
+            `Franchise joining fee ${currencySymbol}${amount.toLocaleString()} cleared successfully.`
+          );
+        } else {
+          FranchiseStorageService.updateApplicationStatus(
+            application.id,
+            application.status,
+            application.applicant.email,
+            'applicant',
+            `Offline Bank Transfer / UTR reference "${effectiveRef}" submitted for joining fee of ${currencySymbol}${amount.toLocaleString()}. Pending administrative bank statement reconciliation.`
+          );
+        }
       }
 
-      NotificationService.sendAutomatedEmail(application, 'payment_confirmed');
-      NotificationService.addNotification(
-        `Payment Cleared (${currencySymbol}${amount.toLocaleString()} ${currency})`,
-        `Payment reference ${newPayment.referenceCode} confirmed for ${application.applicant.fullName}`,
-        'success',
-        application.id
-      );
+      if (paymentStatus === 'completed') {
+        NotificationService.sendAutomatedEmail(application, 'payment_confirmed');
+        NotificationService.addNotification(
+          `Payment Cleared (${currencySymbol}${amount.toLocaleString()} ${currency})`,
+          `Payment reference ${newPayment.referenceCode} confirmed for ${application.applicant.fullName}`,
+          'success',
+          application.id
+        );
+      } else {
+        NotificationService.addNotification(
+          `Payment Submitted for Verification (${currencySymbol}${amount.toLocaleString()} ${currency})`,
+          `Bank reference ${newPayment.referenceCode} received. An administrator will verify the funds within 2-4 business hours.`,
+          'info',
+          application.id
+        );
+      }
 
       playApprovalSuccessSound();
       setCompletedPayment(newPayment);

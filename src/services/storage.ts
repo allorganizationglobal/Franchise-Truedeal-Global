@@ -1123,8 +1123,42 @@ export class FranchiseStorageService {
     this.recordAuditLog(
       'PAYMENT_RECORDED',
       id,
-      `Processed payment $${payment.amount.toLocaleString()} ${payment.currency} via ${payment.method}. Ref: ${payment.referenceCode}`,
+      `Processed payment ${payment.currency === 'INR' ? '₹' : '$'}${payment.amount.toLocaleString()} ${payment.currency} via ${payment.method}. Ref: ${payment.referenceCode} (Status: ${payment.status})`,
       'applicant'
+    );
+
+    return true;
+  }
+
+  static updatePaymentStatus(
+    appId: string,
+    paymentId: string,
+    newStatus: 'completed' | 'processing' | 'failed',
+    verifiedBy: string = 'director@truedealglobal.com'
+  ): boolean {
+    const apps = this.getApplications();
+    const target = apps.find(a => a.id === appId);
+    if (!target) return false;
+
+    const payment = target.payments.find(p => p.id === paymentId);
+    if (!payment) return false;
+
+    payment.status = newStatus;
+    target.updatedAt = new Date().toISOString();
+
+    if (newStatus === 'completed' && payment.type === 'franchise_deposit') {
+      target.status = 'deposit_paid';
+    }
+
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+    this.saveApplication(target, false);
+
+    this.recordAuditLog(
+      'PAYMENT_STATUS_UPDATED',
+      appId,
+      `Payment ${paymentId} status verified as ${newStatus} by ${verifiedBy}. Ref: ${payment.referenceCode}`,
+      'director',
+      verifiedBy
     );
 
     return true;

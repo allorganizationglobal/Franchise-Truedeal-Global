@@ -537,6 +537,95 @@ export function AdminDashboard({
               )}
             </div>
 
+            {/* Payments & Financial Verification Ledger */}
+            <div className="space-y-2 text-xs">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block">
+                Payment Transactions &amp; Receipts ({selectedApp.payments.length})
+              </span>
+              {selectedApp.payments.length === 0 ? (
+                <p className="text-slate-400 text-xs py-2">No payment transactions recorded.</p>
+              ) : (
+                <div className="space-y-2">
+                  {selectedApp.payments.map(p => (
+                    <div
+                      key={p.id}
+                      className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-bold text-slate-900 dark:text-slate-100">
+                          <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>{p.currency === 'INR' ? '₹' : '$'}{p.amount.toLocaleString()} {p.currency}</span>
+                          <span className="text-[10px] text-slate-400 uppercase font-mono">({p.type.replace('_', ' ')})</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold capitalize ${
+                          p.status === 'completed'
+                            ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300'
+                            : p.status === 'processing'
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300'
+                            : 'bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300'
+                        }`}>
+                          {p.status}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-mono">
+                        Ref: {p.referenceCode} · {new Date(p.timestamp).toLocaleDateString()}
+                      </div>
+                      {p.status === 'processing' && (
+                        <div className="pt-1 flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              FranchiseStorageService.updatePaymentStatus(
+                                selectedApp.id,
+                                p.id,
+                                'completed',
+                                currentUser?.email || 'director@truedealglobal.com'
+                              );
+                              NotificationService.addNotification(
+                                'Payment Verified',
+                                `Payment ${p.referenceCode} confirmed & cleared.`,
+                                'success',
+                                selectedApp.id
+                              );
+                              playApprovalSuccessSound();
+                              refreshData();
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors shadow-xs cursor-pointer flex items-center gap-1"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Verify &amp; Clear Bank Funds</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Direct Applicant Communications */}
+            <div className="space-y-2 text-xs pt-1">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block">
+                Direct Applicant Communication
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                <a
+                  href={`https://wa.me/${selectedApp.applicant.phone.replace(/[^0-9]/g, '')}?text=Hello%20${encodeURIComponent(selectedApp.applicant.fullName)},%20this%20is%20TrueDeal%20Global%20Franchise%20Executive%20Operations%20regarding%20Application%20%23${selectedApp.id}.`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 border border-emerald-200 dark:border-emerald-800 font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-center"
+                >
+                  <span>WhatsApp Applicant</span>
+                </a>
+                <a
+                  href={`mailto:${selectedApp.applicant.email}?subject=TRUEDEAL%20GLOBAL%20Franchise%20Application%20Status%20Update%20%23${selectedApp.id}&body=Dear%20${encodeURIComponent(selectedApp.applicant.fullName)},%0D%0A%0D%0ARegarding%20your%20franchise%20application%20${selectedApp.id}...`}
+                  className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer text-center"
+                >
+                  <span>Send Direct Email</span>
+                </a>
+              </div>
+            </div>
+
             {/* Officer Notes & Review Trail */}
             <div className="space-y-2 text-xs">
               <span className="font-semibold text-slate-700 dark:text-slate-300 block">Director Audit Trail</span>

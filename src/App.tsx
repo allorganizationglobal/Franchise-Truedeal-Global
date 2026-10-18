@@ -15,10 +15,20 @@ import { NotificationsDrawer } from './components/common/NotificationsDrawer';
 import { WhatsAppSupportWidget } from './components/common/WhatsAppSupportWidget';
 import { FranchiseStorageService } from './services/storage';
 import { NotificationService } from './services/notificationService';
+import { updateDocumentSeo } from './utils/seo';
 import { UserRole, AppNotification, FranchiseApplication, EmailNotification, SyncQueueItem, Currency } from './types/franchise';
 
+function getInitialTabFromUrl(): string {
+  if (typeof window === 'undefined') return 'plans';
+  const hash = window.location.hash.replace('#', '').toLowerCase();
+  if (['plans', 'apply', 'tracker', 'admin', 'analytics', 'api'].includes(hash)) {
+    return hash;
+  }
+  return 'plans';
+}
+
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<string>('plans');
+  const [currentTab, setCurrentTab] = useState<string>(getInitialTabFromUrl);
   const [userRole, setUserRole] = useState<UserRole>('director');
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [currency, setCurrency] = useState<Currency>(() => {
@@ -44,6 +54,26 @@ export default function App() {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [emails, setEmails] = useState<EmailNotification[]>([]);
   const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
+
+  // Update Technical SEO & Canonical metadata when currentTab changes
+  useEffect(() => {
+    updateDocumentSeo(currentTab);
+    const expectedHash = currentTab === 'plans' ? '' : `#${currentTab}`;
+    if (window.location.hash !== expectedHash) {
+      const newUrl = expectedHash ? `${window.location.pathname}${expectedHash}` : window.location.pathname;
+      window.history.replaceState(null, '', newUrl);
+    }
+  }, [currentTab]);
+
+  // Listen to browser forward/back buttons for URL hash navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const tab = getInitialTabFromUrl();
+      setCurrentTab(tab);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   // Apply dark mode class
   useEffect(() => {
@@ -102,19 +132,39 @@ export default function App() {
 
   const handleSignInGoogle = async () => {
     try {
-      await signInWithGoogle();
-      refreshAllData();
-    } catch (err) {
-      console.error('Sign-in failed:', err);
+      const user = await signInWithGoogle();
+      if (user) {
+        NotificationService.addNotification(
+          'Signed In Successfully',
+          `Welcome back, ${user.displayName || user.email || 'Authorized Partner'}.`,
+          'success'
+        );
+        refreshAllData();
+      }
+    } catch (err: any) {
+      const code = err?.code || '';
+      const msg = err?.message || '';
+      if (!code.includes('popup-closed') && !msg.includes('popup-closed')) {
+        NotificationService.addNotification(
+          'Sign-In Notice',
+          msg || 'Authentication could not be completed. Please try again.',
+          'warning'
+        );
+      }
     }
   };
 
   const handleSignOut = async () => {
     try {
       await signOutUser();
+      NotificationService.addNotification(
+        'Signed Out',
+        'You have successfully signed out.',
+        'info'
+      );
       refreshAllData();
     } catch (err) {
-      console.error('Sign-out failed:', err);
+      console.warn('Sign-out warning:', err);
     }
   };
 
@@ -207,6 +257,8 @@ export default function App() {
             applicationId={selectedAppId}
             onRefresh={refreshAllData}
             onSelectApplication={setSelectedAppId}
+            currentUser={currentUser}
+            userRole={userRole}
           />
         )}
 

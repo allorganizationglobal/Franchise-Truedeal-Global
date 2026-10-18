@@ -15,7 +15,7 @@ import {
   Printer,
   Sparkles
 } from 'lucide-react';
-import { FranchiseApplication, DocumentUpload, PaymentRecord } from '../../types/franchise';
+import { FranchiseApplication, DocumentUpload, PaymentRecord, UserRole } from '../../types/franchise';
 import { FRANCHISE_PLANS, getPlanById, FranchiseStorageService } from '../../services/storage';
 import { NotificationService } from '../../services/notificationService';
 import { BiometricPromptModal } from '../common/BiometricPromptModal';
@@ -23,17 +23,23 @@ import { PaymentModal } from '../common/PaymentModal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
+import { User as FirebaseUser } from 'firebase/auth';
+import { isUserAdmin } from '../../services/firebase';
 
 interface ApplicantStatusTrackerProps {
   applicationId: string;
   onRefresh: () => void;
   onSelectApplication: (id: string) => void;
+  currentUser?: FirebaseUser | null;
+  userRole?: UserRole;
 }
 
 export function ApplicantStatusTracker({
   applicationId,
   onRefresh,
-  onSelectApplication
+  onSelectApplication,
+  currentUser,
+  userRole = 'applicant'
 }: ApplicantStatusTrackerProps) {
   const applications = FranchiseStorageService.getApplications();
   const currentApp = applications.find(a => a.id === applicationId) || applications[0];
@@ -43,7 +49,18 @@ export function ApplicantStatusTracker({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
+  
+  // Verification Gate States
+  const [unlockEmailOrPhone, setUnlockEmailOrPhone] = useState('');
+  const [unlockId, setUnlockId] = useState(currentApp?.id || '');
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+  const [sessionUnlocked, setSessionUnlocked] = useState<boolean>(() => {
+    if (!currentApp) return false;
+    return typeof window !== 'undefined' && sessionStorage.getItem('tdg_auth_' + currentApp.id) === 'true';
+  });
+
   const [searchId, setSearchId] = useState('');
+  const [searchEmailOrPhone, setSearchEmailOrPhone] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
 
   if (!currentApp) {
@@ -53,6 +70,11 @@ export function ApplicantStatusTracker({
       </div>
     );
   }
+
+  // Authorization Evaluation
+  const isAdmin = (userRole && userRole !== 'applicant') || (currentUser && isUserAdmin(currentUser.email));
+  const isOwner = currentUser && currentUser.email && currentApp.applicant.email.toLowerCase() === currentUser.email.toLowerCase();
+  const hasAccess = isAdmin || isOwner || sessionUnlocked;
 
   const plan = getPlanById(currentApp.planId) || FRANCHISE_PLANS.find(p => p.id === currentApp.planId) || FRANCHISE_PLANS[0];
   const appCurrency = currentApp.currency || 'INR';
@@ -118,6 +140,126 @@ export function ApplicantStatusTracker({
       onRefresh();
     }, 800);
   };
+
+  // Secure Applicant Gate: Block unauthorized public enumeration
+  if (!hasAccess) {
+    const handleVerifyAccess = (e: React.FormEvent) => {
+      e.preventDefault();
+      setUnlockError(null);
+      const targetId = unlockId.trim();
+      const targetContact = unlockEmailOrPhone.trim().toLowerCase();
+
+      if (!targetId || !targetContact) {
+        setUnlockError('Please provide both your Application Reference ID and registered email or phone.');
+        return;
+      }
+
+      const targetApp = applications.find(a => a.id.toLowerCase() === targetId.toLowerCase());
+      if (!targetApp) {
+        setUnlockError('Application Reference ID not found. Please check your confirmation receipt or register a new plan.');
+        return;
+      }
+
+      const emailMatches = targetApp.applicant.email.toLowerCase() === targetContact;
+      const cleanPhoneInput = targetContact.replace(/[^0-9]/g, '');
+      const cleanAppPhone = targetApp.applicant.phone.replace(/[^0-9]/g, '');
+      const phoneMatches = cleanPhoneInput.length >= 6 && cleanAppPhone.includes(cleanPhoneInput);
+
+      if (emailMatches || phoneMatches) {
+        sessionStorage.setItem('tdg_auth_' + targetApp.id, 'true');
+        setSessionUnlocked(true);
+        onSelectApplication(targetApp.id);
+        NotificationService.addNotification('Identity Verified', `Access granted to record ${targetApp.id}`, 'success');
+      } else {
+        setUnlockError('Authentication mismatch: The email or phone number does not match the applicant on file.');
+      }
+    };
+
+    return (
+      <div className="max-w-xl mx-auto py-12 px-4 animate-fade-in">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-6 sm:p-8 space-y-6">
+          <div className="text-center space-y-3">
+            <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto shadow-sm">
+              <Lock className="w-7 h-7" />
+            </div>
+            <div>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-slate-100">
+                Secure Applicant Verification
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1 max-w-sm mx-auto">
+                To protect confidential applicant KYC documents, financial statements, and onboarding records, please verify your ownership.
+              </p>
+            </div>
+          </div>
+
+          <form onSubmit={handleVerifyAccess} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Application Reference ID
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. TDG-2026-104"
+                value={unlockId}
+                onChange={e => {
+                  setUnlockId(e.target.value);
+                  if (unlockError) setUnlockError(null);
+                }}
+                className="w-full px-3.5 py-2.5 text-xs font-mono bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Registered Email Address or Phone Number
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="e.g. applicant@truedealpartner.com or +91 98765 43210"
+                value={unlockEmailOrPhone}
+                onChange={e => {
+                  setUnlockEmailOrPhone(e.target.value);
+                  if (unlockError) setUnlockError(null);
+                }}
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            {unlockError && (
+              <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 rounded-xl text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                <span>{unlockError}</span>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition-colors shadow-md flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <ShieldCheck className="w-4 h-4" />
+              <span>Verify & Access Onboarding Status</span>
+            </button>
+          </form>
+
+          <div className="pt-3 border-t border-slate-100 dark:border-slate-800 text-center">
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Need assistance retrieving your Reference ID? Contact{' '}
+              <a
+                href="https://wa.me/918091667890?text=Hello%20TrueDeal%20Support,%20I%20need%20help%20tracking%20my%20Franchise%20Application."
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+              >
+                WhatsApp Helpdesk (+91 80916 67890)
+              </a>
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4 sm:px-6 space-y-8">

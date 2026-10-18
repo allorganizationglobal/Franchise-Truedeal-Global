@@ -1,0 +1,22 @@
+# robots.txt for TRUEDEAL GLOBAL Franchise Portal
+# Canonical Production Hostname: https://businessfranchise.truedealglobal.com
+
+User-agent: *
+Allow: /
+Allow: /assets/
+Allow: /#plans
+Allow: /#apply
+Allow: /#tracker
+Allow: /#faq
+Allow: /#calculator
+Allow: /#api
+
+# Disallow internal administrative and private executive dashboards
+Disallow: /admin
+Disallow: /analytics
+Disallow: /#admin
+Disallow: /#analytics
+Disallow: /api/private/
+
+# Canonical Sitemap Reference
+Sitemap: https://businessfranchise.truedealglobal.com/sitemap.xml

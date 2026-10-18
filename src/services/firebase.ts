@@ -23,19 +23,42 @@ export async function signInWithGoogle(): Promise<FirebaseUser | null> {
     const result = await signInWithPopup(auth, googleProvider);
     if (result.user) {
       // Sync user profile to Firestore
-      const userRef = doc(db, 'users', result.user.uid);
-      await setDoc(userRef, {
-        uid: result.user.uid,
-        displayName: result.user.displayName || 'Authorized Partner',
-        email: result.user.email || '',
-        photoURL: result.user.photoURL || '',
-        lastLoginAt: new Date().toISOString()
-      }, { merge: true });
+      try {
+        const userRef = doc(db, 'users', result.user.uid);
+        await setDoc(userRef, {
+          uid: result.user.uid,
+          displayName: result.user.displayName || 'Authorized Partner',
+          email: result.user.email || '',
+          photoURL: result.user.photoURL || '',
+          lastLoginAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (dbErr) {
+        console.warn('Could not sync user profile to Firestore:', dbErr);
+      }
       return result.user;
     }
     return null;
-  } catch (error) {
-    console.error('Firebase Google Sign-In error:', error);
+  } catch (error: any) {
+    const errorCode = error?.code || '';
+    const errorMessage = error?.message || '';
+
+    // Gracefully handle intentional user cancellation/closure without throwing fatal errors
+    if (
+      errorCode === 'auth/popup-closed-by-user' ||
+      errorCode === 'auth/cancelled-popup-request' ||
+      errorMessage.includes('popup-closed-by-user') ||
+      errorMessage.includes('cancelled-popup-request')
+    ) {
+      console.info('Google sign-in dialog was closed or cancelled by the user.');
+      return null;
+    }
+
+    if (errorCode === 'auth/popup-blocked') {
+      console.warn('Google sign-in popup was blocked by the browser.');
+      throw new Error('Sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+    }
+
+    console.warn('Firebase Google Sign-In warning:', error);
     throw error;
   }
 }

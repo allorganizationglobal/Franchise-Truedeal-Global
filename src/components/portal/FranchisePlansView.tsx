@@ -242,7 +242,7 @@ export function FranchisePlansView({
       </div>
 
       {/* 8 Official TrueDeal Global Franchise Plan Cards Grid - Perfectly Justified for Mobile, Tablet, Laptop, and Desktop */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 items-stretch">
+      <div id="plans-catalog" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6 items-stretch scroll-mt-24">
         {filteredPlans.map((plan) => {
           const isSelected = selectedPlanId === plan.id;
           const displayPrice = currency === 'INR'
@@ -350,7 +350,7 @@ export function FranchisePlansView({
       </div>
 
       {/* Interactive Franchise Commission & ROI Calculator */}
-      <div className="p-5 sm:p-8 lg:p-10 bg-white dark:bg-[#002244] rounded-3xl border border-slate-200 dark:border-white/10 shadow-xl space-y-8">
+      <div id="calculator" className="p-5 sm:p-8 lg:p-10 bg-white dark:bg-[#002244] rounded-3xl border border-slate-200 dark:border-white/10 shadow-xl space-y-8 scroll-mt-24">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-white/10">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
@@ -807,7 +807,7 @@ export function FranchisePlansView({
       </div>
 
       {/* Frequently Asked Questions Accordion */}
-      <div className="max-w-4xl mx-auto space-y-4">
+      <div id="faq" className="max-w-4xl mx-auto space-y-4 scroll-mt-24">
         <div className="text-center space-y-2 mb-6">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-slate-100">
             Frequently Asked Questions
