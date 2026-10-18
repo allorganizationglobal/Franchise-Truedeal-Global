@@ -1,7 +1,10 @@
 {
   "name": "TrueDeal Global Franchise Plan Portal",
   "description": "Explore TRUEDEAL GLOBAL franchise opportunities, compare available plans, understand eligibility and application steps, and enquire about becoming a franchise partner.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]

@@ -170,6 +170,8 @@ export interface BiometricEnrollmentData {
   deviceLabel: string;
   backupPinConfigured: boolean;
   securityProofHash: string;
+  facePhotoUrl?: string;
+  biometricScore?: number;
 }
 
 export interface AuditLogEntry {

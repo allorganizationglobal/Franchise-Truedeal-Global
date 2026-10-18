@@ -590,11 +590,22 @@ export function ApplicantStatusTracker({
                   <span>Target Start:</span>
                   <span className="text-slate-900 dark:text-slate-100">{currentApp.preferredStartDate}</span>
                 </div>
-                <div className="flex justify-between">
+                <div className="flex justify-between items-center">
                   <span>Biometric Verified:</span>
-                  <span className={`font-semibold ${currentApp.biometricApprovalVerified ? 'text-emerald-600' : 'text-slate-400'}`}>
-                    {currentApp.biometricApprovalVerified ? 'Yes (Passkey Verified)' : 'Pending signature'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {currentApp.applicantBiometricEnrollment?.facePhotoUrl && (
+                      <img
+                        src={currentApp.applicantBiometricEnrollment.facePhotoUrl}
+                        alt="Applicant Biometric Portrait"
+                        className="w-6 h-6 rounded-full object-cover border border-emerald-500 shadow-sm"
+                      />
+                    )}
+                    <span className={`font-semibold ${currentApp.biometricApprovalVerified || currentApp.applicantBiometricEnrollment?.enrolled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                      {currentApp.applicantBiometricEnrollment?.enrolled
+                        ? `Enrolled (${currentApp.applicantBiometricEnrollment.modality === 'face_id' ? 'Webcam Face ID' : 'Touch ID'})`
+                        : currentApp.biometricApprovalVerified ? 'Yes (Passkey Verified)' : 'Pending signature'}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
