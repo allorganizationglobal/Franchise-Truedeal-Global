@@ -1042,14 +1042,46 @@ export class FranchiseStorageService {
     userEmail: string,
     userRole: UserRole,
     noteText?: string,
-    biometricVerified?: boolean
+    biometricVerified?: boolean,
+    expectedVersion?: number,
+    decisionReason?: string
   ): FranchiseApplication | null {
     const apps = this.getApplications();
     const target = apps.find(a => a.id === id);
     if (!target) return null;
 
+    // Optimistic concurrency locking
+    if (expectedVersion !== undefined && target.concurrencyVersion !== undefined && target.concurrencyVersion !== expectedVersion) {
+      console.warn(`[Concurrency Conflict] Application ${id} version mismatch (current: ${target.concurrencyVersion}, expected: ${expectedVersion})`);
+      throw new Error('Concurrency conflict: This application record was modified by another officer. Please refresh to view latest state.');
+    }
+
+    const previousStatus = target.status;
     target.status = newStatus;
     target.updatedAt = new Date().toISOString();
+    target.concurrencyVersion = (target.concurrencyVersion || 1) + 1;
+
+    // Maintain immutable chronological status audit history
+    if (!target.statusHistory) {
+      target.statusHistory = [];
+    }
+    target.statusHistory.push({
+      id: 'sh_' + Math.random().toString(36).substring(2, 9),
+      fromStatus: previousStatus,
+      toStatus: newStatus,
+      timestamp: new Date().toISOString(),
+      changedByEmail: userEmail,
+      changedByRole: userRole,
+      reason: decisionReason || noteText
+    });
+
+    if (decisionReason) {
+      if (newStatus === 'approved') {
+        target.decisionReason = decisionReason;
+      } else if (newStatus === 'rejected' || newStatus === 'declined') {
+        target.rejectionReason = decisionReason;
+      }
+    }
 
     if (biometricVerified) {
       target.biometricApprovalVerified = true;
@@ -1069,11 +1101,14 @@ export class FranchiseStorageService {
 
     localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
 
+    // Cloud persistence
+    syncApplicationToFirestore(target).catch(() => {});
+
     // Audit log
     this.recordAuditLog(
       `STATUS_CHANGED_TO_${newStatus.toUpperCase()}`,
       id,
-      `Status changed to "${newStatus}". Biometric Verified: ${!!biometricVerified}. Note: ${noteText || 'None'}`,
+      `Status transitioned from "${previousStatus}" to "${newStatus}". Biometric Verified: ${!!biometricVerified}. Reason: ${decisionReason || noteText || 'None'}`,
       userRole,
       userEmail
     );
@@ -1090,6 +1125,108 @@ export class FranchiseStorageService {
     }
 
     return target;
+  }
+
+  static assignReviewer(
+    appId: string,
+    reviewerEmail: string,
+    reviewerName: string,
+    actorEmail: string
+  ): boolean {
+    const apps = this.getApplications();
+    const target = apps.find(a => a.id === appId);
+    if (!target) return false;
+
+    target.assignedReviewer = reviewerName;
+    target.assignedReviewerEmail = reviewerEmail;
+    target.updatedAt = new Date().toISOString();
+    target.concurrencyVersion = (target.concurrencyVersion || 1) + 1;
+
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+    syncApplicationToFirestore(target).catch(() => {});
+
+    this.recordAuditLog(
+      'REVIEWER_ASSIGNED',
+      appId,
+      `Assigned review officer ${reviewerName} (${reviewerEmail}) to application ${appId}`,
+      'franchise_manager',
+      actorEmail
+    );
+    return true;
+  }
+
+  static addReviewNote(
+    appId: string,
+    text: string,
+    authorRole: UserRole = 'franchise_manager',
+    authorName: string = 'Authorized Officer'
+  ): boolean {
+    const apps = this.getApplications();
+    const target = apps.find(a => a.id === appId);
+    if (!target) return false;
+
+    if (!target.reviewNotes) {
+      target.reviewNotes = [];
+    }
+
+    const newNote: ReviewNote = {
+      id: 'note_' + Math.random().toString(36).substring(2, 9),
+      authorRole,
+      authorName,
+      text,
+      timestamp: new Date().toISOString()
+    };
+
+    target.reviewNotes.push(newNote);
+    target.updatedAt = new Date().toISOString();
+    target.concurrencyVersion = (target.concurrencyVersion || 1) + 1;
+
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+    syncApplicationToFirestore(target).catch(() => {});
+
+    this.recordAuditLog(
+      'NOTE_ADDED',
+      appId,
+      `Internal review note added by ${authorName} (${authorRole}): "${text.substring(0, 60)}${text.length > 60 ? '...' : ''}"`,
+      authorRole,
+      authorName
+    );
+
+    return true;
+  }
+
+  static updateDocumentStatus(
+    appId: string,
+    docId: string,
+    newStatus: DocumentUpload['status'],
+    notes?: string,
+    reviewerEmail: string = 'director@truedealglobal.com'
+  ): boolean {
+    const apps = this.getApplications();
+    const target = apps.find(a => a.id === appId);
+    if (!target) return false;
+
+    const doc = target.documents.find(d => d.id === docId);
+    if (!doc) return false;
+
+    doc.status = newStatus;
+    if (notes) {
+      doc.auditNotes = notes;
+    }
+    target.updatedAt = new Date().toISOString();
+    target.concurrencyVersion = (target.concurrencyVersion || 1) + 1;
+
+    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+    syncApplicationToFirestore(target).catch(() => {});
+
+    this.recordAuditLog(
+      `DOC_STATUS_${newStatus.toUpperCase()}`,
+      appId,
+      `Document "${doc.name}" marked as ${newStatus}. Notes: ${notes || 'None'}`,
+      'reviewer',
+      reviewerEmail
+    );
+    return true;
   }
 
   static addDocument(id: string, doc: DocumentUpload): boolean {

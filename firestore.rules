@@ -15,6 +15,12 @@ service cloud.firestore {
          request.auth.token.email.matches('.*@truedealglobal[.]com'));
     }
 
+    // Helper: Check if authenticated user is the legitimate applicant owner of the record
+    function isApplicationOwner(applicantEmail) {
+      return isAuthenticated() && request.auth.token.email != null &&
+        request.auth.token.email.lower() == applicantEmail.lower();
+    }
+
     // Helper: Validate application document structure on creation by public visitors
     function isValidApplicationSubmission() {
       let data = request.resource.data;
@@ -24,16 +30,18 @@ service cloud.firestore {
              data.applicant.email is string && data.applicant.email.size() >= 5 &&
              data.applicant.phone is string && data.applicant.phone.size() >= 8 &&
              data.planId is string &&
-             data.status in ['submitted', 'automated_verified', 'draft'] &&
+             data.status in ['submitted', 'under_review', 'automated_verified', 'draft'] &&
              data.createdAt is string;
     }
 
     // 1. Franchise Applications Collection
     match /applications/{applicationId} {
-      // Only authorized administrators can read applications list and details
-      allow read: if isAuthorizedAdmin();
+      // Authorized administrators can read all applications;
+      // Authenticated applicants can read ONLY their own application matching their verified email
+      allow read: if isAuthorizedAdmin() || 
+                     (resource != null && isApplicationOwner(resource.data.applicant.email));
       
-      // Public visitors can only submit a valid, well-formed new application
+      // Public visitors can submit a valid, well-formed new application
       allow create: if isValidApplicationSubmission();
       
       // Only authorized administrators can update status, add review notes, or approve
@@ -50,10 +58,10 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // 3. User Profiles
+    // 3. User Profiles - Isolated to profile owner or administrator
     match /users/{userId} {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isAuthorizedAdmin());
-      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && (request.auth.uid == userId || isAuthorizedAdmin());
     }
 
     // 4. Connection Probe Doc

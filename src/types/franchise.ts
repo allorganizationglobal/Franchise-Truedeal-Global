@@ -1,9 +1,12 @@
 export type UserRole =
   | 'super_admin'
+  | 'franchise_manager'
+  | 'reviewer'
+  | 'support_staff'
+  | 'applicant'
   | 'director'
   | 'compliance'
-  | 'territory_manager'
-  | 'applicant';
+  | 'territory_manager';
 
 export interface UserProfile {
   id: string;
@@ -54,12 +57,18 @@ export interface FranchisePlan {
 export type ApplicationStatus =
   | 'draft'
   | 'submitted'
+  | 'under_review'
+  | 'documents_required'
+  | 'due_diligence'
+  | 'approved'
+  | 'rejected'
+  | 'agreement_pending'
+  | 'onboarding'
+  | 'onboarded'
   | 'automated_verified'
   | 'compliance_review'
-  | 'approved'
   | 'contract_issued'
   | 'deposit_paid'
-  | 'onboarded'
   | 'revision_requested'
   | 'declined';
 
@@ -83,6 +92,12 @@ export type DocumentType =
   | 'fdd_signed'
   | 'corporate_charter';
 
+export type DocumentStatus =
+  | 'pending_audit'
+  | 'verified'
+  | 'rejected'
+  | 'resubmission_required';
+
 export interface DocumentUpload {
   id: string;
   type: DocumentType;
@@ -90,7 +105,7 @@ export interface DocumentUpload {
   sizeBytes: number;
   mimeType: string;
   uploadedAt: string;
-  status: 'verified' | 'pending_audit' | 'revision_needed';
+  status: DocumentStatus;
   isEncrypted: boolean;
   encryptionAlgorithm: 'AES-GCM-256';
   cipherChecksum: string;
@@ -123,10 +138,30 @@ export interface ReviewNote {
   timestamp: string;
 }
 
+export interface StatusHistoryEntry {
+  id: string;
+  fromStatus: ApplicationStatus;
+  toStatus: ApplicationStatus;
+  timestamp: string;
+  changedByEmail: string;
+  changedByRole: UserRole;
+  reason?: string;
+}
+
+export interface DocumentChecklistItem {
+  docType: DocumentType;
+  label: string;
+  required: boolean;
+  verified: boolean;
+  notes?: string;
+  verifiedAt?: string;
+}
+
 export interface FranchiseApplication {
   id: string; // e.g. "TDG-2026-104"
   createdAt: string;
   updatedAt: string;
+  concurrencyVersion?: number;
   applicant: {
     fullName: string;
     email: string;
@@ -151,10 +186,16 @@ export interface FranchiseApplication {
   operationalExperienceYears: number;
   businessBackgroundSummary: string;
   status: ApplicationStatus;
+  statusHistory?: StatusHistoryEntry[];
   automatedEvaluation: AutomatedScoringResult;
   documents: DocumentUpload[];
+  documentChecklist?: DocumentChecklistItem[];
   payments: PaymentRecord[];
   reviewNotes: ReviewNote[];
+  assignedReviewer?: string;
+  assignedReviewerEmail?: string;
+  decisionReason?: string;
+  rejectionReason?: string;
   contractSignedAt?: string;
   biometricApprovalVerified?: boolean;
   biometricApprovalTimestamp?: string;

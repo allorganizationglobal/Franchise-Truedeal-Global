@@ -82,7 +82,7 @@ export function DocumentViewerModal({
             <span className={`text-xs font-medium px-2 py-0.5 rounded ${
               doc.status === 'verified'
                 ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300'
-                : doc.status === 'revision_needed'
+                : doc.status === 'rejected' || doc.status === 'resubmission_required'
                 ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
                 : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
             }`}>
