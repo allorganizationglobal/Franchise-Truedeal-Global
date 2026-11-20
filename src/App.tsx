@@ -9,6 +9,18 @@ import { ApplicantStatusTracker } from './components/portal/ApplicantStatusTrack
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AnalyticsView } from './components/admin/AnalyticsView';
 import { ApiDocsView } from './components/docs/ApiDocsView';
+import { ContactUsPage } from './components/legal/ContactUsPage';
+import { PricingTransparencyPage } from './components/legal/PricingTransparencyPage';
+import {
+  AboutUsPage,
+  TermsPage,
+  PrivacyPolicyPage,
+  RefundPolicyPage,
+  CancellationPolicyPage,
+  FranchiseTermsPage,
+  GrievanceRedressalPage,
+  DeliveryPolicyPage
+} from './components/legal/LegalPages';
 import { SyncStatusMonitorModal } from './components/common/SyncStatusMonitorModal';
 import { EmailPreviewModal } from './components/common/EmailPreviewModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
@@ -16,20 +28,81 @@ import { WhatsAppSupportWidget } from './components/common/WhatsAppSupportWidget
 import { FranchiseStorageService } from './services/storage';
 import { NotificationService } from './services/notificationService';
 import { updateDocumentSeo } from './utils/seo';
-import { UserRole, AppNotification, FranchiseApplication, EmailNotification, SyncQueueItem, Currency } from './types/franchise';
+import { UserRole, AppNotification, EmailNotification, SyncQueueItem, Currency } from './types/franchise';
 
-function getInitialTabFromUrl(): string {
+const PATH_TO_TAB: Record<string, string> = {
+  '/': 'plans',
+  '/plans': 'plans',
+  '/pricing': 'pricing',
+  '/packages': 'pricing',
+  '/apply': 'apply',
+  '/tracker': 'tracker',
+  '/about': 'about',
+  '/about-us': 'about',
+  '/contact': 'contact',
+  '/contact-us': 'contact',
+  '/terms': 'terms',
+  '/terms-and-conditions': 'terms',
+  '/privacy': 'privacy',
+  '/privacy-policy': 'privacy',
+  '/refund': 'refund',
+  '/refund-policy': 'refund',
+  '/cancellation': 'cancellation',
+  '/cancellation-policy': 'cancellation',
+  '/franchise-terms': 'franchise-terms',
+  '/franchise-agreement': 'franchise-terms',
+  '/grievance': 'grievance',
+  '/grievance-redressal': 'grievance',
+  '/delivery': 'delivery',
+  '/delivery-policy': 'delivery',
+  '/shipping-policy': 'delivery',
+  '/admin': 'admin',
+  '/analytics': 'analytics',
+  '/api-docs': 'api',
+  '/api': 'api'
+};
+
+const TAB_TO_PATH: Record<string, string> = {
+  plans: '/',
+  pricing: '/pricing',
+  apply: '/apply',
+  tracker: '/tracker',
+  about: '/about',
+  contact: '/contact',
+  terms: '/terms',
+  privacy: '/privacy-policy',
+  refund: '/refund-policy',
+  cancellation: '/cancellation-policy',
+  'franchise-terms': '/franchise-terms',
+  grievance: '/grievance-redressal',
+  delivery: '/delivery-policy',
+  admin: '/admin',
+  analytics: '/analytics',
+  api: '/api-docs'
+};
+
+const VALID_TABS = new Set(Object.keys(TAB_TO_PATH));
+
+function getTabFromLocation(): string {
   if (typeof window === 'undefined') return 'plans';
-  const hash = window.location.hash.replace('#', '').toLowerCase();
-  if (['plans', 'apply', 'tracker', 'admin', 'analytics', 'api'].includes(hash)) {
-    return hash;
+
+  const cleanPath = window.location.pathname.replace(/\/+$/, '').toLowerCase() || '/';
+  if (cleanPath !== '/' && PATH_TO_TAB[cleanPath]) {
+    return PATH_TO_TAB[cleanPath];
   }
+
+  const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+  if (hash) {
+    if (VALID_TABS.has(hash)) return hash;
+    if (PATH_TO_TAB[`/${hash}`]) return PATH_TO_TAB[`/${hash}`];
+  }
+
   return 'plans';
 }
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<string>(getInitialTabFromUrl);
-  const [userRole, setUserRole] = useState<UserRole>('director');
+  const [currentTab, setCurrentTab] = useState<string>(getTabFromLocation);
+  const [userRole, setUserRole] = useState<UserRole>('applicant');
   const [currentUser, setCurrentUser] = useState<FirebaseUser | null>(null);
   const [currency, setCurrency] = useState<Currency>(() => {
     if (typeof window === 'undefined') return 'INR';
@@ -37,8 +110,10 @@ export default function App() {
   });
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return localStorage.getItem('truedeal_theme') === 'dark' ||
-      (!('truedeal_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    return (
+      localStorage.getItem('truedeal_theme') === 'dark' ||
+      (!('truedeal_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    );
   });
 
   const [isOffline, setIsOffline] = useState<boolean>(() => FranchiseStorageService.isSimulatedOffline());
@@ -55,24 +130,34 @@ export default function App() {
   const [emails, setEmails] = useState<EmailNotification[]>([]);
   const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
 
-  // Update Technical SEO & Canonical metadata when currentTab changes
+  const handleNavigate = (tab: string) => {
+    const resolved = VALID_TABS.has(tab) ? tab : PATH_TO_TAB[`/${tab}`] || 'plans';
+    setCurrentTab(resolved);
+    if (typeof window !== 'undefined') {
+      const targetPath = TAB_TO_PATH[resolved] || '/';
+      if (window.location.pathname !== targetPath || window.location.hash) {
+        window.history.pushState({ tab: resolved }, '', targetPath);
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
+  // Sync SEO metadata on tab changes
   useEffect(() => {
     updateDocumentSeo(currentTab);
-    const expectedHash = currentTab === 'plans' ? '' : `#${currentTab}`;
-    if (window.location.hash !== expectedHash) {
-      const newUrl = expectedHash ? `${window.location.pathname}${expectedHash}` : window.location.pathname;
-      window.history.replaceState(null, '', newUrl);
-    }
   }, [currentTab]);
 
-  // Listen to browser forward/back buttons for URL hash navigation
+  // Listen to browser back/forward and hash changes
   useEffect(() => {
-    const handleHashChange = () => {
-      const tab = getInitialTabFromUrl();
-      setCurrentTab(tab);
+    const handleRouteChange = () => {
+      setCurrentTab(getTabFromLocation());
     };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener('popstate', handleRouteChange);
+    window.addEventListener('hashchange', handleRouteChange);
+    return () => {
+      window.removeEventListener('popstate', handleRouteChange);
+      window.removeEventListener('hashchange', handleRouteChange);
+    };
   }, []);
 
   // Apply dark mode class
@@ -85,6 +170,13 @@ export default function App() {
       localStorage.setItem('truedeal_theme', 'light');
     }
   }, [darkMode]);
+
+  // Persist currency choice
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('truedeal_currency', currency);
+    }
+  }, [currency]);
 
   // Load initial stores & listen to network events
   useEffect(() => {
@@ -116,15 +208,23 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user && isUserAdmin(user.email)) {
+        const lowerEmail = (user.email || '').toLowerCase();
+        setUserRole(
+          lowerEmail === 'allorganizationglobal@gmail.com' || lowerEmail === 'director@truedealglobal.com'
+            ? 'super_admin'
+            : 'director'
+        );
         try {
           const remoteApps = await fetchApplicationsFromFirestore();
           if (remoteApps && remoteApps.length > 0) {
-            remoteApps.forEach(app => FranchiseStorageService.saveApplication(app, false));
+            remoteApps.forEach((app) => FranchiseStorageService.saveApplication(app, false));
             refreshAllData();
           }
         } catch (err) {
           console.warn('Could not sync remote Firestore applications:', err);
         }
+      } else {
+        setUserRole('applicant');
       }
     });
     return () => unsubscribe();
@@ -157,11 +257,8 @@ export default function App() {
   const handleSignOut = async () => {
     try {
       await signOutUser();
-      NotificationService.addNotification(
-        'Signed Out',
-        'You have successfully signed out.',
-        'info'
-      );
+      setUserRole('applicant');
+      NotificationService.addNotification('Signed Out', 'You have successfully signed out.', 'info');
       refreshAllData();
     } catch (err) {
       console.warn('Sign-out warning:', err);
@@ -182,14 +279,24 @@ export default function App() {
     }
   };
 
-  const unreadNotifsCount = notifications.filter(n => !n.read).length;
+  const handleRoleChange = (nextRole: UserRole) => {
+    if (currentUser && isUserAdmin(currentUser.email)) {
+      setUserRole(nextRole);
+    } else {
+      setUserRole('applicant');
+    }
+  };
+
+  const unreadNotifsCount = notifications.filter((n) => !n.read).length;
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200">
       {/* Offline Banner when in offline mode */}
       {isOffline && (
         <div className="bg-amber-500 text-slate-950 px-4 py-1.5 text-xs font-semibold text-center flex items-center justify-center gap-2">
-          <span>Offline Operation Active: Changes will be stored in your encrypted local enclave and queued for background sync.</span>
+          <span>
+            Offline Operation Active: Changes will be stored locally and queued for synchronization when reconnected.
+          </span>
           <button
             type="button"
             onClick={() => handleToggleOffline(false)}
@@ -203,9 +310,9 @@ export default function App() {
       {/* Top Navbar */}
       <Navbar
         currentTab={currentTab}
-        onSelectTab={setCurrentTab}
+        onSelectTab={handleNavigate}
         userRole={userRole}
-        onChangeRole={setUserRole}
+        onChangeRole={handleRoleChange}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         isOffline={isOffline}
@@ -222,15 +329,26 @@ export default function App() {
         onSignOut={handleSignOut}
       />
 
-      {/* Main Viewport Content - Full Width & Justified */}
+      {/* Main Viewport Content */}
       <main className="flex-1 w-full max-w-full overflow-x-hidden">
         {currentTab === 'plans' && (
           <FranchisePlansView
             currency={currency}
             onToggleCurrency={setCurrency}
+            onNavigate={handleNavigate}
             onSelectPlan={(planId) => {
               setWizardPlanId(planId);
-              setCurrentTab('apply');
+              handleNavigate('apply');
+            }}
+          />
+        )}
+
+        {currentTab === 'pricing' && (
+          <PricingTransparencyPage
+            onNavigate={handleNavigate}
+            onSelectPlan={(planId) => {
+              setWizardPlanId(planId);
+              handleNavigate('apply');
             }}
           />
         )}
@@ -240,13 +358,14 @@ export default function App() {
             initialPlanId={wizardPlanId}
             currency={currency}
             onToggleCurrency={setCurrency}
+            onNavigate={handleNavigate}
             onApplicationCreated={(newApp) => {
               setSelectedAppId(newApp.id);
               refreshAllData();
             }}
             onNavigateToTracker={(appId) => {
               setSelectedAppId(appId);
-              setCurrentTab('tracker');
+              handleNavigate('tracker');
               refreshAllData();
             }}
           />
@@ -262,6 +381,16 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'about' && <AboutUsPage onNavigate={handleNavigate} />}
+        {currentTab === 'contact' && <ContactUsPage onNavigate={handleNavigate} />}
+        {currentTab === 'terms' && <TermsPage onNavigate={handleNavigate} />}
+        {currentTab === 'privacy' && <PrivacyPolicyPage onNavigate={handleNavigate} />}
+        {currentTab === 'refund' && <RefundPolicyPage onNavigate={handleNavigate} />}
+        {currentTab === 'cancellation' && <CancellationPolicyPage onNavigate={handleNavigate} />}
+        {currentTab === 'franchise-terms' && <FranchiseTermsPage onNavigate={handleNavigate} />}
+        {currentTab === 'grievance' && <GrievanceRedressalPage onNavigate={handleNavigate} />}
+        {currentTab === 'delivery' && <DeliveryPolicyPage onNavigate={handleNavigate} />}
+
         {currentTab === 'admin' && (
           <AdminDashboard
             userRole={userRole}
@@ -270,20 +399,22 @@ export default function App() {
             onRefresh={refreshAllData}
             onSelectApplication={(id) => {
               setSelectedAppId(id);
-              setCurrentTab('tracker');
+              handleNavigate('tracker');
             }}
           />
         )}
 
-        {currentTab === 'analytics' && <AnalyticsView />}
+        {currentTab === 'analytics' && (
+          <AnalyticsView currentUser={currentUser} onSignInGoogle={handleSignInGoogle} />
+        )}
 
         {currentTab === 'api' && <ApiDocsView />}
       </main>
 
-      {/* World-Class Enterprise Global Footer */}
+      {/* Enterprise Global Footer with All Required Legal & Transparency Links */}
       <Footer
         currency={currency}
-        onSelectTab={setCurrentTab}
+        onSelectTab={handleNavigate}
         onOpenEmailModal={() => setIsEmailModalOpen(true)}
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
         emailsCount={emails.length}
@@ -314,7 +445,7 @@ export default function App() {
         onOpenEmails={() => setIsEmailModalOpen(true)}
         onNavigateToApp={(appId) => {
           setSelectedAppId(appId);
-          setCurrentTab('tracker');
+          handleNavigate('tracker');
         }}
       />
 

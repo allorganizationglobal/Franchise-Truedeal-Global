@@ -31,7 +31,8 @@ import {
   BiometricEnrollmentData,
   Currency
 } from '../../types/franchise';
-import { FRANCHISE_PLANS, evaluateFranchiseApplication, FranchiseStorageService, USD_INR_RATE, USD_SURCHARGE_PCT } from '../../services/storage';
+import { evaluateFranchiseApplication, FranchiseStorageService, USD_INR_RATE, USD_SURCHARGE_PCT } from '../../services/storage';
+import { calculateFeeBreakdownINR, getPlanTransparencyDefaults } from '../../config/complianceConfig';
 import { encryptFilePayload, validateUploadFile } from '../../utils/crypto';
 import { NotificationService } from '../../services/notificationService';
 import { PaymentModal } from '../common/PaymentModal';
@@ -45,6 +46,7 @@ interface ApplicationWizardProps {
   onToggleCurrency?: (c: Currency) => void;
   onApplicationCreated: (app: FranchiseApplication) => void;
   onNavigateToTracker: (appId: string) => void;
+  onNavigate?: (tab: string) => void;
 }
 
 export function ApplicationWizard({
@@ -52,8 +54,11 @@ export function ApplicationWizard({
   currency = 'INR',
   onToggleCurrency,
   onApplicationCreated,
-  onNavigateToTracker
+  onNavigateToTracker,
+  onNavigate
 }: ApplicationWizardProps) {
+  const plans = FranchiseStorageService.getPlans();
+  const complianceConfig = FranchiseStorageService.getComplianceConfig();
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [selectedPlanId, setSelectedPlanId] = useState<string>(initialPlanId);
   const [currentCurrency, setCurrentCurrency] = useState<Currency>(currency);
@@ -65,16 +70,16 @@ export function ApplicationWizard({
   const [territoryRequested, setTerritoryRequested] = useState('Noida / Delhi-NCR Metro, India');
   const [preferredStartDate, setPreferredStartDate] = useState('2026-07-01');
 
-  // Applicant Profile
-  const [fullName, setFullName] = useState('Chandan Kumar');
-  const [email, setEmail] = useState('applicant@truedealpartner.com');
-  const [phone, setPhone] = useState('+91 98765 43210');
+  // Applicant Profile (clean empty defaults so real applicants enter authentic details)
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [entityType, setEntityType] = useState<FranchiseApplication['applicant']['entityType']>('individual');
   const [country, setCountry] = useState('India');
-  const [stateProvince, setStateProvince] = useState('Uttar Pradesh / Delhi-NCR');
-  const [city, setCity] = useState('Noida');
-  const [postalCode, setPostalCode] = useState('201301');
+  const [stateProvince, setStateProvince] = useState('Uttar Pradesh');
+  const [city, setCity] = useState('');
+  const [postalCode, setPostalCode] = useState('');
 
   // Biometric Enrollment State
   const [showBiometricSetupModal, setShowBiometricSetupModal] = useState<boolean>(false);
@@ -82,13 +87,11 @@ export function ApplicationWizard({
 
   // Financials
   const [liquidCapital, setLiquidCapital] = useState<number>(150000);
-  const [netWorth, setNetWorth] = useState<number>(550000);
+  const [netWorth, setNetWorth] = useState<number>(500000);
   const [creditScoreTier, setCreditScoreTier] = useState<FranchiseApplication['financials']['creditScoreTier']>('750_plus');
   const [fundingSource, setFundingSource] = useState<FranchiseApplication['financials']['fundingSource']>('cash_savings');
-  const [operationalExperienceYears, setOperationalExperienceYears] = useState<number>(8);
-  const [businessBackgroundSummary, setBusinessBackgroundSummary] = useState(
-    '10+ years scaling regional specialty commercial outlets, executive logistics, and customer retention programs.'
-  );
+  const [operationalExperienceYears, setOperationalExperienceYears] = useState<number>(3);
+  const [businessBackgroundSummary, setBusinessBackgroundSummary] = useState('');
 
   // Documents
   const [documents, setDocuments] = useState<DocumentUpload[]>([]);
@@ -101,9 +104,11 @@ export function ApplicationWizard({
   const [savedDraftExists, setSavedDraftExists] = useState<boolean>(false);
   const [savedDraftDate, setSavedDraftDate] = useState<string | null>(null);
 
-  // Legal Consent & Duplicate Prevention
+  // Mandatory Legal Consent (All unchecked by default) & Duplicate Prevention
   const [consentAccuracy, setConsentAccuracy] = useState<boolean>(false);
   const [consentTerms, setConsentTerms] = useState<boolean>(false);
+  const [consentNoGuarantee, setConsentNoGuarantee] = useState<boolean>(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [duplicateAppWarning, setDuplicateAppWarning] = useState<{ id: string; status: string } | null>(null);
 
   // Payment
@@ -115,7 +120,9 @@ export function ApplicationWizard({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionResult, setSubmissionResult] = useState<FranchiseApplication | null>(null);
 
-  const selectedPlan = FRANCHISE_PLANS.find(p => p.id === selectedPlanId) || FRANCHISE_PLANS[0];
+  const selectedPlan = plans.find((p) => p.id === selectedPlanId) || plans[0];
+  const selectedFeeBreakdown = calculateFeeBreakdownINR(selectedPlan.priceINR, complianceConfig);
+  const selectedPlanTransparency = getPlanTransparencyDefaults(selectedPlan);
 
   // Detect saved draft on mount
   useEffect(() => {
@@ -251,30 +258,63 @@ export function ApplicationWizard({
     operationalExperienceYears
   );
 
-  // Final Submit
-  const handleFinalSubmit = async () => {
+  // Final Submit (always starts in 'submitted' pending manual compliance review)
+  const handleFinalSubmit = async (bypassDuplicateCheck = false) => {
+    setValidationError(null);
+
+    if (!fullName.trim() || fullName.trim().length < 2) {
+      setValidationError('Please enter your full legal name in Step 2 before submitting.');
+      setCurrentStep(2);
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setValidationError('Please enter a valid email address in Step 2 before submitting.');
+      setCurrentStep(2);
+      return;
+    }
+    if (phone.replace(/\D/g, '').length < 7) {
+      setValidationError('Please enter a valid phone number in Step 2 before submitting.');
+      setCurrentStep(2);
+      return;
+    }
+
+    if (!bypassDuplicateCheck) {
+      const existingApps = FranchiseStorageService.getApplications();
+      const duplicate = existingApps.find(
+        (a) =>
+          a.applicant.email.toLowerCase() === email.trim().toLowerCase() &&
+          a.planId === selectedPlanId &&
+          !['rejected', 'declined'].includes(a.status)
+      );
+      if (duplicate) {
+        setDuplicateAppWarning({ id: duplicate.id, status: duplicate.status });
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
-    const applicationId = 'TDG-2026-' + Math.floor(100 + Math.random() * 900);
+    const applicationId = 'TDG-2026-' + Math.floor(1000 + Math.random() * 9000);
     const finalScore = evaluateFranchiseApplication(
       selectedPlan,
       { liquidCapital, netWorth, creditScoreTier, fundingSource },
       operationalExperienceYears
     );
+    const nowIso = new Date().toISOString();
 
     const newApp: FranchiseApplication = {
       id: applicationId,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
       applicant: {
-        fullName,
-        email,
-        phone,
-        companyName,
-        country,
-        stateProvince,
-        city,
-        postalCode,
+        fullName: fullName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        companyName: companyName.trim(),
+        country: country.trim() || 'India',
+        stateProvince: stateProvince.trim(),
+        city: city.trim(),
+        postalCode: postalCode.trim(),
         entityType
       },
       financials: {
@@ -285,39 +325,56 @@ export function ApplicationWizard({
       },
       planId: selectedPlanId,
       currency: currentCurrency,
-      territoryRequested,
+      territoryRequested: territoryRequested.trim(),
       preferredStartDate,
       operationalExperienceYears,
-      businessBackgroundSummary,
-      status: finalScore.preliminaryVerdict === 'auto_approved' ? 'automated_verified' : 'submitted',
+      businessBackgroundSummary: businessBackgroundSummary.trim(),
+      // Always enters 'submitted' status pending manual compliance review (never auto-approved)
+      status: 'submitted',
       automatedEvaluation: finalScore,
       documents,
       payments: paymentRecord ? [paymentRecord] : [],
       reviewNotes: [],
-      applicantBiometricEnrollment: applicantBiometrics || undefined
+      applicantBiometricEnrollment: applicantBiometrics || undefined,
+      policyConsentAcceptedAt: nowIso
     };
 
-    setTimeout(() => {
-      FranchiseStorageService.saveApplication(newApp);
-      NotificationService.sendAutomatedEmail(newApp, 'application_submitted');
-      if (finalScore.preliminaryVerdict === 'auto_approved') {
-        NotificationService.sendAutomatedEmail(newApp, 'automated_passed');
-      }
+    // Best-effort server-side CRM lead ingestion (secret key stays strictly on server)
+    try {
+      await fetch('/api/leads/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newApp.applicant.fullName,
+          email: newApp.applicant.email,
+          phone: newApp.applicant.phone,
+          service: selectedPlan.title,
+          sourceWebsite: 'https://businessfranchise.truedealglobal.com/',
+          message: `Franchise Application ${applicationId} · Territory: ${newApp.territoryRequested} · Package INR: ₹${selectedPlan.priceINR}`,
+          consent: true
+        })
+      });
+    } catch {
+      // Non-blocking: local application persistence still succeeds
+    }
 
-      setIsSubmitting(false);
-      setSubmissionResult(newApp);
-      onApplicationCreated(newApp);
+    FranchiseStorageService.saveApplication(newApp);
+    NotificationService.sendAutomatedEmail(newApp, 'application_submitted');
+    localStorage.removeItem('truedeal_franchise_draft');
 
-      try {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      } catch {}
+    setIsSubmitting(false);
+    setSubmissionResult(newApp);
+    onApplicationCreated(newApp);
 
-      playApprovalSuccessSound();
-    }, 1200);
+    try {
+      confetti({
+        particleCount: 60,
+        spread: 65,
+        origin: { y: 0.6 }
+      });
+    } catch {}
+
+    playApprovalSuccessSound();
   };
 
   return (
@@ -393,13 +450,20 @@ export function ApplicationWizard({
               type="button"
               onClick={() => {
                 setDuplicateAppWarning(null);
-                handleFinalSubmit();
+                handleFinalSubmit(true);
               }}
               className="px-3 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 font-medium hover:bg-indigo-100/50 cursor-pointer"
             >
               Submit Supplementary Application
             </button>
           </div>
+        </div>
+      )}
+
+      {validationError && (
+        <div className="mb-6 p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-800 dark:text-rose-200 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{validationError}</span>
         </div>
       )}
 
@@ -465,7 +529,7 @@ export function ApplicationWizard({
 
               {/* All 8 Plan Cards Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                {FRANCHISE_PLANS.map(plan => {
+                {plans.map((plan) => {
                   const isSelected = selectedPlanId === plan.id;
                   const priceFormatted = currentCurrency === 'INR'
                     ? '₹' + plan.priceINR.toLocaleString('en-IN')
@@ -974,112 +1038,142 @@ export function ApplicationWizard({
             </div>
           )}
 
-          {/* STEP 5: Integrated Payment Processing */}
+          {/* STEP 5: Pre-Payment Summary, Fee Schedule & Optional Bank Reference */}
           {currentStep === 5 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-1">
-                  Due Diligence & Territory Reservation Fee
+                  Pre-Payment Fee Summary & Payment Schedule
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {currentCurrency === 'INR'
-                    ? 'A nominal ₹2,500 application filing fee is required to reserve your requested territory and trigger automated AML/KYC background clearance.'
-                    : `A nominal $${Math.round((2500 / USD_INR_RATE) * 1.1)} USD application filing fee is required to reserve your requested territory (includes +10% international cross-border processing).`}
+                  Submitting this online franchise application carries{' '}
+                  <strong>₹{complianceConfig.applicationFeeINR.toLocaleString('en-IN')}</strong> application filing fee.
+                  Review your selected package pricing, applicable taxes, and policies below before proceeding.
                 </p>
               </div>
 
-              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4">
-                <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-700">
-                  <div>
-                    <span className="text-sm font-bold text-slate-900 dark:text-slate-100 block">
-                      Territory Lock & Due Diligence Filing
-                    </span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      Refundable within 14 days if territory allocation cannot be completed
+              <div className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-5">
+                {/* Pre-Payment Package & Tax Breakdown */}
+                <div className="space-y-2.5 pb-4 border-b border-slate-200 dark:border-slate-700 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Selected Franchise Package</span>
+                    <span className="font-bold text-slate-900 dark:text-white text-sm">{selectedPlan.title}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Application Filing Fee (Now)</span>
+                    <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                      ₹{complianceConfig.applicationFeeINR.toLocaleString('en-IN')}
                     </span>
                   </div>
-                  <span className="text-2xl font-extrabold font-mono text-slate-900 dark:text-slate-100">
-                    {currentCurrency === 'INR' ? '₹2,500' : `$${Math.round((2500 / USD_INR_RATE) * 1.1)}`}{' '}
-                    <span className="text-xs font-normal text-slate-500">{currentCurrency}</span>
-                  </span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">One-Time Franchise Package Fee (Base INR)</span>
+                    <span className="font-mono font-semibold text-slate-900 dark:text-white">
+                      ₹{selectedFeeBreakdown.baseFeeINR.toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">GST / Applicable Tax Treatment</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300 text-right">
+                      {selectedFeeBreakdown.gstAmountINR > 0
+                        ? `₹${selectedFeeBreakdown.gstAmountINR.toLocaleString('en-IN')} (${selectedFeeBreakdown.gstRatePercent}% GST)`
+                        : selectedFeeBreakdown.gstLabel}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-200 dark:border-slate-700">
+                    <span className="font-bold text-slate-900 dark:text-white">Total Package Payable (INR)</span>
+                    <span className="text-xl font-black font-mono text-indigo-600 dark:text-indigo-400">
+                      ₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')}
+                    </span>
+                  </div>
                 </div>
 
-                {/* Official Corporate Banking Card */}
-                <div className="p-4 bg-orange-50/70 dark:bg-orange-950/30 rounded-xl border border-orange-200 dark:border-orange-800/60 space-y-3">
-                  <div className="flex items-center justify-between pb-2 border-b border-orange-200/80 dark:border-orange-800/50">
-                    <div className="flex items-center gap-2">
-                      <img src="/assets/truedeal_logo.png" alt="TrueDeal Global" className="h-6 w-auto object-contain" />
-                      <span className="text-xs font-bold text-orange-950 dark:text-orange-200">
-                        Official Corporate Banking Verification
-                      </span>
+                {/* Payment Purpose, Activation Timeline & Policy Links */}
+                <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                  <div>
+                    <strong>Payment Purpose:</strong> {selectedPlanTransparency.paymentSchedule}
+                  </div>
+                  <div>
+                    <strong>Activation Timeline:</strong> {selectedPlanTransparency.activationTimeline}
+                  </div>
+                  <div>
+                    <strong>Refund & Cancellation Terms:</strong> {selectedPlanTransparency.refundEligibility}
+                  </div>
+                  {onNavigate && (
+                    <div className="flex flex-wrap gap-3 pt-1 font-semibold text-indigo-600 dark:text-indigo-400">
+                      <button type="button" onClick={() => onNavigate('refund')} className="underline cursor-pointer">
+                        Refund Policy
+                      </button>
+                      <button type="button" onClick={() => onNavigate('cancellation')} className="underline cursor-pointer">
+                        Cancellation Policy
+                      </button>
+                      <button type="button" onClick={() => onNavigate('terms')} className="underline cursor-pointer">
+                        Terms & Conditions
+                      </button>
+                      <button type="button" onClick={() => onNavigate('privacy')} className="underline cursor-pointer">
+                        Privacy Policy
+                      </button>
+                      <button type="button" onClick={() => onNavigate('franchise-terms')} className="underline cursor-pointer">
+                        Franchise Agreement Terms
+                      </button>
                     </div>
-                    <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 px-2 py-0.5 rounded">
-                      Bank of Baroda Verified
+                  )}
+                </div>
+
+                {/* Official Corporate Bank Account Card */}
+                <div className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2.5 text-xs">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                    <span className="font-bold text-slate-900 dark:text-white">
+                      Official Corporate Bank Account ({complianceConfig.legalName})
+                    </span>
+                    <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 rounded">
+                      Online Gateway (Razorpay) Pending Verification
                     </span>
                   </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Billing Name / Beneficiary:</span>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">TRUEDEAL GLOBAL OPC PVT LTD</span>
+                      <span className="text-[10px] text-slate-400 block">Bank & Branch:</span>
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {complianceConfig.bankDetails.bankName} ({complianceConfig.bankDetails.branchName})
+                      </span>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Bank Name:</span>
-                      <span className="font-bold text-slate-900 dark:text-slate-100">BANK OF BARODA</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block">Current Account Number:</span>
-                      <span className="font-mono font-bold text-slate-900 dark:text-slate-100">26290200001514</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400 block">IFSC Code:</span>
-                      <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                        BARB0NOIDAX <span className="font-sans font-normal text-amber-600 dark:text-amber-400 text-[10px]">(5th is Zero)</span>
+                      <span className="text-[10px] text-slate-400 block">Current Account / IFSC:</span>
+                      <span className="font-mono font-bold text-slate-900 dark:text-white">
+                        {complianceConfig.bankDetails.accountNumber} · {complianceConfig.bankDetails.ifscCode}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 {!paymentCompleted ? (
-                  <div className="space-y-3 pt-2">
+                  <div className="space-y-3 pt-1">
                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                      Payment rails: {currentCurrency === 'INR' ? 'UPI QR, Bank of Baroda NetBanking, Domestic Cards' : 'International Card, ACH, or SWIFT Wire'}. Instant automated digital receipt and cryptographic transaction hash generated upon authorization.
+                      You may proceed to Step 6 and submit your application without upfront payment (recommended so our
+                      compliance team can verify your territory first), or optionally record a corporate bank transfer
+                      UTR reference for manual accounts verification.
                     </p>
-                    <div className="flex flex-col sm:flex-row items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowPaymentModal(true)}
-                        className="w-full sm:w-auto py-3 px-5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                      >
-                        <CreditCard className="w-4 h-4" />
-                        <span>
-                          Process {currentCurrency === 'INR' ? '₹2,500' : `$${Math.round((2500 / USD_INR_RATE) * 1.1)}`} Application Fee
-                        </span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => setShowPaymentModal(true)}
-                        className="w-full sm:w-auto py-3 px-4 bg-orange-500 hover:bg-orange-600 text-white font-semibold text-xs rounded-xl transition-all shadow-md flex items-center justify-center gap-2"
-                      >
-                        <QrCode className="w-4 h-4" />
-                        <span>View Bank of Baroda QR Code</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentModal(true)}
+                      className="py-2.5 px-4 bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>Optional: Record Corporate Bank / UPI Reference (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
+                    </button>
                   </div>
                 ) : (
-                  <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-center justify-between">
+                  <div className="p-4 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <Clock className="w-5 h-5 text-amber-600 shrink-0" />
                       <div>
-                        <span className="font-semibold block">Application Fee Paid & Confirmed</span>
-                        <span className="text-[11px] font-mono text-emerald-700 dark:text-emerald-300">
-                          Ref: {paymentRecord?.referenceCode} · Receipt: {paymentRecord?.receiptNumber}
+                        <span className="font-bold block">Payment Reference Recorded — Pending Bank Reconciliation</span>
+                        <span className="text-[11px] font-mono">
+                          UTR/Ref: {paymentRecord?.referenceCode} · Tracking: {paymentRecord?.receiptNumber}
                         </span>
                       </div>
                     </div>
                     <span className="text-xs font-mono font-bold">
-                      {currentCurrency === 'INR' ? '₹2,500' : `$${Math.round((2500 / USD_INR_RATE) * 1.1)}`} {currentCurrency}
+                      ₹{(paymentRecord?.amount || selectedFeeBreakdown.totalPayableINR).toLocaleString('en-IN')}
                     </span>
                   </div>
                 )}
@@ -1087,15 +1181,16 @@ export function ApplicationWizard({
             </div>
           )}
 
-          {/* STEP 6: Automated Scoring & Submission */}
+          {/* STEP 6: Preliminary Completeness Check & Submission */}
           {currentStep === 6 && (
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-1">
-                  Automated Rule Engine Score & Submission
+                  Preliminary Completeness Review & Submission
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Our automated algorithm calculates eligibility across liquidity, credit rating, and territory conflicts.
+                  This preliminary completeness check helps organize your application file. Final approval always
+                  requires manual compliance verification and a signed Franchise Agreement.
                 </p>
               </div>
 
@@ -1192,31 +1287,65 @@ export function ApplicationWizard({
                 </div>
               </div>
 
-              {/* Mandatory Legal & Accuracy Certification */}
+              {/* Mandatory Affirmative Policy & Compliance Declarations (Unchecked by Default) */}
               <div className="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                  Applicant Declarations & Consent
+                  Required Legal Declarations & Affirmative Consent
                 </h4>
                 <label className="flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={consentAccuracy}
-                    onChange={e => setConsentAccuracy(e.target.checked)}
+                    onChange={(e) => setConsentAccuracy(e.target.checked)}
                     className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                   />
                   <span>
-                    <strong>Truth & Accuracy Certification:</strong> I certify that all details, financial declarations, and uploaded identification documents submitted are authentic, current, and verifiable.
+                    <strong>1. Truth & Accuracy Certification:</strong> I certify that all personal, entity, financial,
+                    and KYC details submitted in this application are authentic, current, and verifiable.
                   </span>
                 </label>
                 <label className="flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={consentTerms}
-                    onChange={e => setConsentTerms(e.target.checked)}
+                    onChange={(e) => setConsentTerms(e.target.checked)}
                     className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
                   />
                   <span>
-                    <strong>Evaluation & Communication Consent:</strong> I agree to TRUEDEAL GLOBAL's background verification checks and consent to receiving official onboarding communications via WhatsApp, Email, and Phone.
+                    <strong>2. Acceptance of Published Policies:</strong> I have read and agree to {complianceConfig.legalName}&apos;s{' '}
+                    <button type="button" onClick={() => onNavigate?.('terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Terms & Conditions
+                    </button>
+                    ,{' '}
+                    <button type="button" onClick={() => onNavigate?.('privacy')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Privacy Policy
+                    </button>
+                    ,{' '}
+                    <button type="button" onClick={() => onNavigate?.('refund')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Refund Policy
+                    </button>
+                    ,{' '}
+                    <button type="button" onClick={() => onNavigate?.('cancellation')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Cancellation Policy
+                    </button>
+                    , and{' '}
+                    <button type="button" onClick={() => onNavigate?.('franchise-terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Franchise Agreement Terms
+                    </button>
+                    .
+                  </span>
+                </label>
+                <label className="flex items-start gap-2.5 text-xs text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={consentNoGuarantee}
+                    onChange={(e) => setConsentNoGuarantee(e.target.checked)}
+                    className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <span>
+                    <strong>3. Manual Review & No Income Guarantee Acknowledgement:</strong> I understand that
+                    submitting this application does not guarantee franchise approval, and that {complianceConfig.legalName} makes
+                    no guarantee of fixed earnings, profit, or passive returns.
                   </span>
                 </label>
               </div>
@@ -1260,8 +1389,8 @@ export function ApplicationWizard({
               ) : (
                 <button
                   type="button"
-                  disabled={isSubmitting || !consentAccuracy || !consentTerms}
-                  onClick={handleFinalSubmit}
+                  disabled={isSubmitting || !consentAccuracy || !consentTerms || !consentNoGuarantee}
+                  onClick={() => handleFinalSubmit(false)}
                   className="w-full sm:w-auto py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                 >
                   {isSubmitting ? (
@@ -1353,9 +1482,10 @@ export function ApplicationWizard({
             payments: [],
             reviewNotes: []
           }}
-          paymentType="application_fee"
-          amount={currentCurrency === 'INR' ? 2500 : Math.round((2500 / USD_INR_RATE) * 1.1)}
-          currency={currentCurrency}
+          paymentType="franchise_deposit"
+          amount={selectedPlan.priceINR}
+          currency="INR"
+          onNavigate={onNavigate}
           onPaymentSuccess={(rec) => {
             setPaymentCompleted(true);
             setPaymentRecord(rec);

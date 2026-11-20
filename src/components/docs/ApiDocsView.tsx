@@ -1,188 +1,162 @@
 import { useState } from 'react';
-import {
-  Code2,
-  Terminal,
-  Copy,
-  Check,
-  Send,
-  ShieldCheck,
-  Globe,
-  Layers,
-  Key,
-  Webhook
-} from 'lucide-react';
+import { Terminal, Copy, Check, ShieldCheck, Lock } from 'lucide-react';
 
 interface EndpointDoc {
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method: 'GET' | 'POST';
   path: string;
   title: string;
   description: string;
-  authRequired: boolean;
-  sampleRequest: Record<string, any>;
-  sampleResponse: Record<string, any>;
+  authNote: string;
+  sampleRequest?: Record<string, unknown>;
+  sampleResponse: Record<string, unknown>;
 }
 
 const ENDPOINTS: EndpointDoc[] = [
   {
+    method: 'GET',
+    path: '/api/health',
+    title: 'Service Health & Gateway Readiness',
+    description:
+      'Returns server availability, CRM/SendGrid configuration flags (boolean only, zero secrets), and Razorpay readiness status.',
+    authNote: 'Public health probe (no credentials exposed)',
+    sampleResponse: {
+      ok: true,
+      service: 'truedeal-franchise-portal',
+      crmConfigured: true,
+      sendGridConfigured: false,
+      paymentGateway: {
+        provider: 'razorpay',
+        status: 'pending_verification',
+        liveCheckoutEnabled: false
+      }
+    }
+  },
+  {
     method: 'POST',
-    path: '/api/v1/franchise/applications',
-    title: 'Submit Franchise Registration',
-    description: 'Registers a new applicant, validates minimum tier liquid capital, and runs the automated evaluation scoring engine.',
-    authRequired: true,
+    path: '/api/contact',
+    title: 'Submit Public Contact / Support Inquiry',
+    description:
+      'Validates customer inquiry fields, checks explicit privacy consent, applies IP rate limiting and honeypot spam protection, and forwards to CRM when configured.',
+    authNote: 'Public form endpoint with rate limit + honeypot protection',
     sampleRequest: {
-      planId: 'plan_standard',
-      currency: 'INR',
-      territoryRequested: 'South Florida Metro Cluster',
-      applicant: {
-        fullName: 'Elena Rostova',
-        email: 'elena@novapartnergroup.com',
-        phone: '+1 (305) 554-9182',
-        companyName: 'Nova Partner Group LLC',
-        entityType: 'llc'
-      },
-      financials: {
-        liquidCapital: 110000,
-        netWorth: 340000,
-        creditScoreTier: '700_749',
-        fundingSource: 'investor_group'
-      },
-      operationalExperienceYears: 8
+      name: 'Applicant Name',
+      email: 'applicant@example.com',
+      phone: '+91-9876543210',
+      inquiryType: 'franchise_inquiry',
+      subject: 'Question about Corporate Package inclusions',
+      message: 'Please share agreement review details for the Corporate Franchise Plan.',
+      consent: true
     },
     sampleResponse: {
-      status: 'success',
-      applicationId: 'TDG-2026-108',
-      preliminaryScore: 88,
-      verdict: 'conditional_fast_track',
-      liquidityStatus: 'pass',
-      territoryAvailable: true,
-      createdAt: '2026-04-12T14:30:00Z',
-      nextAction: 'KYC_DOCUMENT_UPLOAD'
+      ok: true,
+      status: 'received',
+      referenceCode: 'TDG-INQ-482910',
+      crmSynced: true,
+      emailDispatched: false
+    }
+  },
+  {
+    method: 'POST',
+    path: '/api/leads/ingest',
+    title: 'Server-Side CRM Lead Ingestion Proxy',
+    description:
+      'Forwards validated franchise leads from this portal to TRUEDEAL GLOBAL CRM using the server-side TRUEDEAL_LEAD_API_KEY environment variable.',
+    authNote: 'Server-side x-api-key injected from environment; never exposed to browser',
+    sampleRequest: {
+      name: 'Applicant Name',
+      email: 'applicant@example.com',
+      phone: '+91-9876543210',
+      service: 'Standard Franchise Plan',
+      sourceWebsite: 'https://businessfranchise.truedealglobal.com/',
+      message: 'Application ID: TDG-2026-109',
+      consent: true
+    },
+    sampleResponse: {
+      ok: true,
+      status: 'created',
+      crmDelivered: true,
+      leadId: 'crm_lead_9281'
     }
   },
   {
     method: 'GET',
-    path: '/api/v1/franchise/applications/{id}/status',
-    title: 'Get Application Lifecycle & Score',
-    description: 'Fetches real-time status, milestone progression, document audit status, and payment logs.',
-    authRequired: true,
-    sampleRequest: {},
+    path: '/api/payments/readiness',
+    title: 'Razorpay Integration Readiness Blueprint',
+    description:
+      'Exposes current gateway compliance posture (liveCheckoutEnabled: false prior to Razorpay approval) and planned server-verified payment lifecycle endpoints.',
+    authNote: 'Public metadata endpoint (never exposes Razorpay secrets)',
     sampleResponse: {
-      applicationId: 'TDG-2026-104',
-      status: 'approved',
-      planTier: 'master',
-      territory: 'Central Texas Corridor',
-      automatedScore: 96,
-      contractSigned: true,
-      biometricVerified: true,
-      depositFunded: true,
-      assignedDirector: 'Evelyn Vance'
+      ok: true,
+      provider: 'razorpay',
+      status: 'pending_verification',
+      liveCheckoutEnabled: false,
+      requiredServerEnvVars: ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET']
     }
   },
   {
     method: 'POST',
-    path: '/api/v1/documents/encrypted-upload',
-    title: 'Upload AES-GCM Encrypted Vault Payload',
-    description: 'Accepts client-side encrypted binary documents with SHA-256 checksum and initialization vector (IV) for tamper-evident storage.',
-    authRequired: true,
+    path: '/api/webhooks/payment',
+    title: 'Signed Payment Webhook Receiver (Razorpay Ready)',
+    description:
+      'Verifies X-Razorpay-Signature / X-TrueDeal-Signature using constant-time HMAC-SHA256 verification against server-side webhook secret.',
+    authNote: 'Requires valid HMAC-SHA256 signature header',
     sampleRequest: {
-      applicationId: 'TDG-2026-104',
-      documentType: 'proof_of_funds',
-      fileName: 'Chase_Liquidity_Statement_Q1.enc',
-      encryptionAlgorithm: 'AES-GCM-256',
-      cipherChecksum: '7d5a99f603f231d5390171626609193d...',
-      ivHex: '91bc44ae22019ff88432a1bb',
-      encryptedPayloadBase64: 'U2FsdGVkX1+vUppA21b9...'
+      event: 'payment.captured',
+      payload: {
+        payment: {
+          entity: {
+            id: 'pay_sample_id',
+            order_id: 'order_sample_id',
+            amount: 499900,
+            currency: 'INR',
+            status: 'captured'
+          }
+        }
+      }
     },
     sampleResponse: {
-      status: 'vault_stored',
-      documentId: 'doc_104_2',
-      sha256DigestVerified: true,
-      vaultRegion: 'us-central-enclave-secure'
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/v1/payments/process-deposit',
-    title: 'Process Franchise Fee or Deposit',
-    description: 'Integrates with PCI Level 1 gateway to capture application fees or franchise license escrow deposits.',
-    authRequired: true,
-    sampleRequest: {
-      applicationId: 'TDG-2026-104',
-      amount: 45000,
-      currency: 'USD',
-      paymentRail: 'escrow_wire',
-      billingEntity: 'Sterling Capital Holdings LLC'
-    },
-    sampleResponse: {
-      status: 'completed',
-      receiptNumber: 'REC-2026-0112',
-      transactionHash: 'tx_0x9b8821a8f921d7',
-      escrowAccountRef: 'TDG-ESCROW-CHASE-092'
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/v1/sync/batch',
-    title: 'Offline Background Data Synchronization',
-    description: 'Batch endpoint for client field applications syncing queued modifications once stable network is restored.',
-    authRequired: true,
-    sampleRequest: {
-      clientId: 'mobile_field_agent_084',
-      conflictResolution: 'timestamp_merge',
-      items: [
-        { operation: 'update_status', id: 'TDG-2026-108', newStatus: 'compliance_review' },
-        { operation: 'add_review_note', id: 'TDG-2026-108', note: 'Escrow letter verified' }
-      ]
-    },
-    sampleResponse: {
-      status: 'synced',
-      itemsProcessed: 2,
-      conflictsResolved: 0,
-      syncHash: '0x8849bcae9123'
+      ok: true,
+      received: true,
+      verified: true
     }
   }
 ];
+
+const CANONICAL_BASE = 'https://businessfranchise.truedealglobal.com';
 
 export function ApiDocsView() {
   const [selectedEndpoint, setSelectedEndpoint] = useState<EndpointDoc>(ENDPOINTS[0]);
   const [codeLang, setCodeLang] = useState<'curl' | 'js' | 'python'>('curl');
   const [copied, setCopied] = useState(false);
-  const [testOutput, setTestOutput] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
 
   const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
+    navigator.clipboard?.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const handleRunTest = () => {
-    setTesting(true);
-    setTestOutput(null);
-
-    setTimeout(() => {
-      setTesting(false);
-      setTestOutput(JSON.stringify(selectedEndpoint.sampleResponse, null, 2));
-    }, 600);
-  };
-
-  // Generate code snippet
   const getCodeSnippet = (ep: EndpointDoc, lang: 'curl' | 'js' | 'python') => {
     if (lang === 'curl') {
-      return `curl -X ${ep.method} "https://franchise.truedealglobal.com${ep.path}" \\
-  -H "Authorization: Bearer tdg_live_sec_9934a81bc2" \\
-  -H "Content-Type: application/json"${ep.method === 'POST' ? ` \\
-  -d '${JSON.stringify(ep.sampleRequest, null, 2)}'` : ''}`;
+      return `curl -X ${ep.method} "${CANONICAL_BASE}${ep.path}" \\
+  -H "Content-Type: application/json"${
+    ep.method === 'POST' && ep.sampleRequest
+      ? ` \\
+  -d '${JSON.stringify(ep.sampleRequest, null, 2)}'`
+      : ''
+  }`;
     }
 
     if (lang === 'js') {
-      return `const response = await fetch("https://franchise.truedealglobal.com${ep.path}", {
+      return `const response = await fetch("${CANONICAL_BASE}${ep.path}", {
   method: "${ep.method}",
   headers: {
-    "Authorization": "Bearer tdg_live_sec_9934a81bc2",
     "Content-Type": "application/json"
-  }${ep.method === 'POST' ? `,
-  body: JSON.stringify(${JSON.stringify(ep.sampleRequest, null, 2)})` : ''}
+  }${
+    ep.method === 'POST' && ep.sampleRequest
+      ? `,
+  body: JSON.stringify(${JSON.stringify(ep.sampleRequest, null, 2)})`
+      : ''
+  }
 });
 
 const data = await response.json();
@@ -191,71 +165,74 @@ console.log(data);`;
 
     return `import requests
 
-url = "https://franchise.truedealglobal.com${ep.path}"
-headers = {
-    "Authorization": "Bearer tdg_live_sec_9934a81bc2",
-    "Content-Type": "application/json"
+url = "${CANONICAL_BASE}${ep.path}"
+headers = {"Content-Type": "application/json"}
+${
+  ep.method === 'POST' && ep.sampleRequest
+    ? `payload = ${JSON.stringify(ep.sampleRequest, null, 4)}
+response = requests.post(url, json=payload, headers=headers)`
+    : `response = requests.get(url, headers=headers)`
 }
-${ep.method === 'POST' ? `payload = ${JSON.stringify(ep.sampleRequest, null, 4)}
-
-response = requests.post(url, json=payload, headers=headers)` : `response = requests.get(url, headers=headers)`}
-
 print(response.json())`;
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8 space-y-8">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mb-1">
-          <Terminal className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
-          <span>Developer Platform & Integration Architecture</span>
+    <div className="max-w-7xl mx-auto py-10 px-4 sm:px-6 lg:px-8 space-y-8">
+      <div className="space-y-2 border-b border-slate-200 dark:border-slate-800 pb-6">
+        <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-400 font-bold uppercase tracking-wider">
+          <Terminal className="w-4 h-4" />
+          <span>TRUEDEAL GLOBAL OPC PVT LTD · Server Architecture Reference</span>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-          TrueDeal Global Franchise API & SDK Explorer
+        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100">
+          Portal API & Razorpay Readiness Specification
         </h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl">
-          RESTful JSON endpoints, WebCrypto document encryption specifications, Webhooks, and offline background sync protocols for third-party ERP, CRM, and compliance systems.
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-3xl">
+          Documents the verified server-side endpoints hosted on{' '}
+          <code className="font-mono text-indigo-600 dark:text-indigo-400">{CANONICAL_BASE}</code>. All API keys,
+          webhook secrets, and payment gateway credentials remain strictly server-side in environment variables.
         </p>
       </div>
 
-      {/* Main Grid: Endpoint List & Detail Console */}
+      {/* Security Notice */}
+      <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-start gap-3 text-xs text-emerald-900 dark:text-emerald-200">
+        <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
+        <div>
+          <strong>Zero Exposed Secrets:</strong> No production API tokens, Razorpay keys, or CRM secrets are embedded
+          in frontend bundles. Authenticated admin operations verify Firebase ID tokens server-side via{' '}
+          <code className="font-mono">Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;</code>.
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left: Endpoint Selector List */}
-        <div className="lg:col-span-4 space-y-2">
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-            <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
-              Base API URL
-            </span>
+        {/* Left: Endpoint List */}
+        <div className="lg:col-span-4 space-y-3">
+          <div className="p-3.5 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
+            <span className="font-semibold text-slate-500 block mb-1">Canonical Base URL</span>
             <code className="font-mono text-indigo-600 dark:text-indigo-400 text-[11px] block truncate">
-              https://franchise.truedealglobal.com/api/v1
+              {CANONICAL_BASE}
             </code>
           </div>
 
-          <div className="space-y-1.5 pt-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block px-1">
-              Core Endpoints
-            </span>
-            {ENDPOINTS.map(ep => (
+          <div className="space-y-1.5">
+            {ENDPOINTS.map((ep) => (
               <button
                 key={ep.path}
                 type="button"
-                onClick={() => {
-                  setSelectedEndpoint(ep);
-                  setTestOutput(null);
-                }}
-                className={`w-full text-left p-3 rounded-xl border transition-all text-xs ${
+                onClick={() => setSelectedEndpoint(ep)}
+                className={`w-full text-left p-3 rounded-xl border transition-all text-xs cursor-pointer ${
                   selectedEndpoint.path === ep.path
                     ? 'bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-400 dark:border-indigo-600 text-indigo-950 dark:text-indigo-100'
                     : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:border-slate-300'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
-                    ep.method === 'POST'
-                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
-                      : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
-                  }`}>
+                  <span
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold font-mono ${
+                      ep.method === 'POST'
+                        ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                    }`}
+                  >
                     {ep.method}
                   </span>
                   <span className="font-mono text-[11px] text-slate-500 truncate">{ep.path}</span>
@@ -266,105 +243,69 @@ print(response.json())`;
           </div>
         </div>
 
-        {/* Right: Interactive Console */}
-        <div className="lg:col-span-8 space-y-6">
-          <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-6">
-            {/* Selected Endpoint Header */}
+        {/* Right: Endpoint Details */}
+        <div className="lg:col-span-8">
+          <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs space-y-5">
             <div>
               <div className="flex items-center gap-2 mb-1.5">
-                <span className={`px-2 py-0.5 rounded text-xs font-bold font-mono ${
-                  selectedEndpoint.method === 'POST'
-                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
-                    : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
-                }`}>
+                <span
+                  className={`px-2 py-0.5 rounded text-xs font-bold font-mono ${
+                    selectedEndpoint.method === 'POST'
+                      ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                  }`}
+                >
                   {selectedEndpoint.method}
                 </span>
                 <span className="font-mono text-sm font-semibold text-slate-900 dark:text-slate-100">
                   {selectedEndpoint.path}
                 </span>
               </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                {selectedEndpoint.title}
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                {selectedEndpoint.description}
-              </p>
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">{selectedEndpoint.title}</h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{selectedEndpoint.description}</p>
+              <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+                <Lock className="w-3.5 h-3.5 text-indigo-500" />
+                <span>{selectedEndpoint.authNote}</span>
+              </div>
             </div>
 
-            {/* Code Generator & Snippet */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  {(['curl', 'js', 'python'] as const).map(lang => (
+                  {(['curl', 'js', 'python'] as const).map((lang) => (
                     <button
                       key={lang}
                       type="button"
                       onClick={() => setCodeLang(lang)}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-md uppercase transition-colors ${
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-md uppercase cursor-pointer ${
                         codeLang === lang
                           ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                       }`}
                     >
                       {lang}
                     </button>
                   ))}
                 </div>
-
                 <button
                   type="button"
                   onClick={() => handleCopy(getCodeSnippet(selectedEndpoint, codeLang))}
-                  className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1 transition-colors"
+                  className="text-xs text-slate-500 hover:text-slate-900 dark:hover:text-slate-200 flex items-center gap-1 cursor-pointer"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copied ? 'Copied' : 'Copy Code'}</span>
+                  <span>{copied ? 'Copied' : 'Copy Snippet'}</span>
                 </button>
               </div>
-
-              <pre className="p-4 bg-slate-950 text-slate-200 rounded-xl text-xs font-mono overflow-x-auto max-h-60 leading-relaxed border border-slate-800">
+              <pre className="p-4 bg-slate-950 text-slate-200 rounded-xl text-xs font-mono overflow-x-auto leading-relaxed border border-slate-800">
                 {getCodeSnippet(selectedEndpoint, codeLang)}
               </pre>
             </div>
 
-            {/* Live Interactive Test Runner */}
-            <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  Interactive API Test Console
-                </h4>
-                <button
-                  type="button"
-                  onClick={handleRunTest}
-                  disabled={testing}
-                  className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-                >
-                  {testing ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Executing Request...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Execute Call</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-              {testOutput && (
-                <div className="space-y-1.5 animate-fade-in">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
-                      HTTP 200 OK · 142ms
-                    </span>
-                    <span className="text-slate-400 font-mono">Content-Type: application/json</span>
-                  </div>
-                  <pre className="p-4 bg-slate-950 text-emerald-400 rounded-xl text-xs font-mono overflow-x-auto max-h-60 leading-relaxed border border-slate-800">
-                    {testOutput}
-                  </pre>
-                </div>
-              )}
+            <div className="space-y-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="text-xs font-bold text-slate-700 dark:text-slate-300">Sample JSON Response</div>
+              <pre className="p-4 bg-slate-950 text-emerald-400 rounded-xl text-xs font-mono overflow-x-auto leading-relaxed border border-slate-800">
+                {JSON.stringify(selectedEndpoint.sampleResponse, null, 2)}
+              </pre>
             </div>
           </div>
         </div>

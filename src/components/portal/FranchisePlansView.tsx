@@ -26,8 +26,9 @@ import {
   Phone,
   Mail
 } from 'lucide-react';
-import { FRANCHISE_PLANS, USD_INR_RATE, USD_SURCHARGE_PCT, formatPrice } from '../../services/storage';
-import { FranchisePlan, Currency } from '../../types/franchise';
+import { FranchiseStorageService, USD_INR_RATE, USD_SURCHARGE_PCT } from '../../services/storage';
+import { calculateFeeBreakdownINR } from '../../config/complianceConfig';
+import { Currency } from '../../types/franchise';
 import { SuccessStoriesSection } from './SuccessStoriesSection';
 import { WhatsAppIcon } from '../common/WhatsAppSupportWidget';
 import { useLanguage } from '../../context/LanguageContext';
@@ -36,21 +37,25 @@ interface FranchisePlansViewProps {
   currency: Currency;
   onToggleCurrency: (c: Currency) => void;
   onSelectPlan: (planId: string) => void;
+  onNavigate?: (tab: string) => void;
 }
 
 export function FranchisePlansView({
   currency,
   onToggleCurrency,
-  onSelectPlan
+  onSelectPlan,
+  onNavigate
 }: FranchisePlansViewProps) {
-  const { language, t } = useLanguage();
+  const { language } = useLanguage();
+  const plans = FranchiseStorageService.getPlans();
+  const complianceConfig = FranchiseStorageService.getComplianceConfig();
   const [selectedPlanId, setSelectedPlanId] = useState<string>('plan_standard');
   const [filterCategory, setFilterCategory] = useState<'all' | 'starter' | 'growth' | 'authority' | 'master'>('all');
-  
-  // Interactive Earnings Calculator
+
+  // Illustrative Commission Estimator (Not a guarantee of income)
   const [calcMonthlyDeals, setCalcMonthlyDeals] = useState<number>(8);
   const [calcAvgDealINR, setCalcAvgDealINR] = useState<number>(35000);
-  const [calcCommissionRate, setCalcCommissionRate] = useState<number>(35); // percentage
+  const [calcCommissionRate, setCalcCommissionRate] = useState<number>(25);
 
   // Legal Document Preview Lightbox
   const [previewDoc, setPreviewDoc] = useState<{ title: string; image: string; desc: string } | null>(null);
@@ -60,7 +65,7 @@ export function FranchisePlansView({
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
   // Filter plans based on category
-  const filteredPlans = FRANCHISE_PLANS.filter(p => {
+  const filteredPlans = plans.filter((p) => {
     if (filterCategory === 'starter') return p.tier === 'basic' || p.tier === 'standard';
     if (filterCategory === 'growth') return p.tier === 'corporate' || p.tier === 'platinum';
     if (filterCategory === 'authority') return p.tier === 'entrepreneur' || p.tier === 'retirement';
@@ -107,16 +112,16 @@ export function FranchisePlansView({
       a: 'Our base franchise joining fee is denominated in Indian Rupees (INR) for domestic partners. When you select US Dollars (USD), the fee is calculated at the current live forex rate (1 USD ≈ ₹87.5) with an additional 10% international rate. This nominal markup covers multi-currency cross-border banking fees, international KYC/AML regulatory processing, foreign wire settlements, and global territory registration.'
     },
     {
-      q: 'What business services can I promote and sell as a TrueDeal Franchisee?',
-      a: 'Depending on your chosen plan, you gain rights to over 20 to 50+ multi-industry verticals. These include Custom Web Development & Mobile Apps, Digital Marketing & SEO, Domestic & International Tours, Visa & Immigration Consulting, Real Estate Deals, E-Commerce, MLM & Book Publishing, Media & Music Recording, Astrology & Jyotish, and Education/College Admissions.'
+      q: 'What business services can I promote and sell as a TRUEDEAL GLOBAL Franchisee?',
+      a: 'Depending on your chosen package and signed Franchise Agreement, you gain commercial rights across approved service verticals including Custom Web & Mobile App Development, Digital Marketing & SEO, Domestic & International Travel Packages, Visa Documentation Assistance, Real Estate Advisory, E-Commerce Setup, Media & Video Production, Book Publishing, Corporate Events, and Education Counseling.'
     },
     {
-      q: 'Do I need technical skills or domain expertise to run the franchise?',
-      a: 'No technical or prior experience is required! TrueDeal Global operates as a turnkey fulfillment partner. You simply generate client inquiries or projects through your localized franchise portal, and our specialized backend engineering, design, legal, and operational divisions fulfill the client deliverables. You receive your commission twice weekly.'
+      q: 'Does submitting an application guarantee franchise approval or fixed income?',
+      a: 'No. Every franchise application undergoes manual KYC, document, and territory review by TRUEDEAL GLOBAL OPC PVT LTD. Commission rates apply strictly to verified, realized client orders under a signed Franchise Agreement; no fixed salary or guaranteed return is offered.'
     },
     {
-      q: 'How frequently are commissions and referral bonuses disbursed?',
-      a: 'All franchise commissions (from 10% up to 85% depending on tier) and 20% direct sub-franchise referral bonuses are paid out twice weekly. Domestic partners receive direct IMPS/NEFT bank transfers, while international partners receive payouts via SWIFT Wire, ACH, or PayPal.'
+      q: 'What is the refund and cancellation process if my application is not approved?',
+      a: 'Online application submission carries ₹0 application fee. If any booking or franchise fee is paid and your application is declined by TRUEDEAL GLOBAL, or cancelled in writing prior to portal activation and agreement execution, it is handled under our published Refund Policy and processed to the original payment source within 7–10 business days upon approval.'
     }
   ];
 
@@ -128,8 +133,8 @@ export function FranchisePlansView({
           <Globe className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
           <span>
             {language === 'hi'
-              ? 'ट्रूडील ग्लोबल · मुख्यालय भारत · विश्वव्यापी सेवाएं'
-              : 'TrueDeal Global · Headquartered in India · Catering Worldwide'}
+              ? 'ट्रूडील ग्लोबल ओपीसी प्रा. लि. · आधिकारिक फ़्रैंचाइज़ी पोर्टल'
+              : 'TRUEDEAL GLOBAL OPC PVT LTD · Official Business Franchise Portal'}
           </span>
         </div>
 
@@ -144,9 +149,9 @@ export function FranchisePlansView({
             </>
           ) : (
             <>
-              Choose Your Official{' '}
+              Official Multi-Vertical{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-500 via-orange-500 to-indigo-600">
-                Franchise Plan
+                Franchise Packages
               </span>
             </>
           )}
@@ -154,9 +159,35 @@ export function FranchisePlansView({
 
         <p className="text-base sm:text-lg text-slate-600 dark:text-slate-400 leading-relaxed max-w-3xl mx-auto text-balance">
           {language === 'hi'
-            ? 'एक ही छतरी के नीचे 20 से 50+ बहु-उद्योग व्यावसायिक सेवाओं का संचालन करें। न्यूनतम निवेश, आजीवन वैधता, 85% तक कमीशन और 20% प्रत्यक्ष रेफरल बोनस। विश्व भर से कोई भी उद्यमी जुड़ सकता है।'
-            : 'Access over 20+ multi-industry business services under one umbrella. Low investment, lifetime validity, twice-weekly commission payouts up to 85%, and 20% direct referral bonuses. Anyone can join from anywhere across the globe.'}
+            ? 'पारदर्शी INR शुल्क, शून्य वार्षिक रॉयल्टी और केंद्रीकृत बैकएंड सेवा वितरण के साथ स्वीकृत बिज़नेस सेवाओं की फ़्रैंचाइज़ी साझेदारी प्राप्त करें। आवेदन के बाद मैनुअल सत्यापन और लिखित अनुबंध अनिवार्य है।'
+            : 'Partner with TRUEDEAL GLOBAL OPC PVT LTD across approved IT, digital marketing, travel, visa assistance, real estate, and corporate service verticals with centralized backend fulfillment and transparent INR pricing. All applications undergo manual review and written agreement execution.'}
         </p>
+
+        {onNavigate && (
+          <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => onNavigate('pricing')}
+              className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90 transition-opacity cursor-pointer"
+            >
+              Full INR Pricing & Tax Schedule
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('franchise-terms')}
+              className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              Franchise Agreement Terms
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate('refund')}
+              className="px-4 py-2 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              Refund & Cancellation Policy
+            </button>
+          </div>
+        )}
 
         {/* Currency Switcher & Surcharge Transparency Box */}
         <div className="pt-2 flex flex-col items-center gap-3 w-full">
@@ -222,7 +253,7 @@ export function FranchisePlansView({
             { id: 'all', label: language === 'hi' ? 'सभी 8 आधिकारिक योजनाएं' : 'All 8 Official Plans' },
             { id: 'starter', label: language === 'hi' ? 'स्टार्टर (बेसिक व स्टैंडर्ड)' : 'Starter (Basic & Standard)' },
             { id: 'growth', label: language === 'hi' ? 'कॉर्पोरेट और प्लैटिनम' : 'Corporate & Platinum' },
-            { id: 'authority', label: language === 'hi' ? 'आंत्रप्रेन्योर और रिटायरमेंट' : 'Entrepreneur & Retirement' },
+            { id: 'authority', label: language === 'hi' ? 'आंत्रप्रेन्योर और उत्तराधिकार' : 'Entrepreneur & Legacy' },
             { id: 'master', label: language === 'hi' ? 'एंटरप्राइज और ग्लोबल' : 'Enterprise & Global' },
           ].map(f => (
             <button
@@ -292,12 +323,13 @@ export function FranchisePlansView({
                     </span>
                   </div>
                   <div className="text-[10px] text-slate-500 dark:text-gray-400 flex items-center justify-between pt-1">
-                    <span>{language === 'hi' ? 'एकमुश्त प्रवेश शुल्क' : 'One-time joining fee'}</span>
-                    {currency === 'USD' && (
-                      <span className="text-amber-500 font-semibold font-mono">
-                        {language === 'hi' ? '+10% अंतर्राष्ट्रीय दर' : '+10% applied'}
-                      </span>
-                    )}
+                    <span>
+                      {currency === 'INR'
+                        ? calculateFeeBreakdownINR(plan.priceINR, complianceConfig).isGstPendingConfirmation
+                          ? 'One-time INR fee (GST TBC)'
+                          : calculateFeeBreakdownINR(plan.priceINR, complianceConfig).gstLabel
+                        : 'One-time reference fee (+10% FX)'}
+                    </span>
                   </div>
                 </div>
 
@@ -349,21 +381,26 @@ export function FranchisePlansView({
         })}
       </div>
 
-      {/* Interactive Franchise Commission & ROI Calculator */}
+      {/* Illustrative Franchise Commission Estimator (No Guarantee Disclaimer) */}
       <div id="calculator" className="p-5 sm:p-8 lg:p-10 bg-white dark:bg-[#002244] rounded-3xl border border-slate-200 dark:border-white/10 shadow-xl space-y-8 scroll-mt-24">
+        <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
+          <strong>Illustrative Estimator Only — No Income or Profit Guarantee:</strong> Figures below are mathematical
+          examples based on user-selected inputs. Actual commercial revenue depends entirely on client acquisition,
+          verified order completion, and market demand.
+        </div>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-white/10">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-bold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-1">
               <Calculator className="w-4 h-4" />
-              <span>{language === 'hi' ? 'अनुमानित आय क्षमता' : 'Projected Earning Potential'}</span>
+              <span>{language === 'hi' ? 'उदाहरणात्मक गणना उपकरण' : 'Illustrative Commission Calculator'}</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
-              {language === 'hi' ? 'इंटरैक्टिव फ़्रैंचाइज़ी राजस्व कैलकुलेटर' : 'Interactive Franchise Revenue Estimator'}
+              {language === 'hi' ? 'फ़्रैंचाइज़ी कमीशन अनुमानक' : 'Illustrative Franchise Commission Estimator'}
             </h2>
             <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
               {language === 'hi'
-                ? 'वेब विकास, टूर पैकेज, वीज़ा, डिजिटल मार्केटिंग और रियल एस्टेट से अपनी कमाई का अनुकरण करें। ट्रूडील बैकएंड डिलीवरी संभालता है।'
-                : 'Simulate your earnings from selling web development, tours, visas, digital marketing, and real estate services. TrueDeal handles backend delivery.'}
+                ? 'नमूना ग्राहक ऑर्डर मूल्य के आधार पर संभावित कमीशन का अनुमान लगाएं। वास्तविक आय की कोई गारंटी नहीं है।'
+                : 'Model hypothetical commissions on verified client orders across approved IT, digital marketing, travel, visa assistance, and real estate services.'}
             </p>
           </div>
 
@@ -476,7 +513,7 @@ export function FranchisePlansView({
             </div>
 
             <p className="text-[10px] text-slate-400 leading-tight">
-              Paid twice weekly directly to your registered bank account or international wire. Excludes additional 20% direct sub-franchise referral bonuses.
+              Illustrative calculation only — not a guarantee of earnings. Commissions apply strictly to realized, paid client orders under a signed Franchise Agreement.
             </p>
 
             <button
@@ -509,16 +546,16 @@ export function FranchisePlansView({
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-xs">
           {[
             { title: 'Web Development & IT', desc: 'Custom Websites, Mobile Apps & ERP' },
-            { title: 'Digital Marketing & SEO', desc: 'Social Media, Ads, Reels & PR' },
+            { title: 'Digital Marketing & SEO', desc: 'Social Media, Ads, Content & PR' },
             { title: 'Tours, Travel & Visas', desc: 'Domestic & International Packages' },
-            { title: 'Real Estate & Properties', desc: 'Commercial & Residential Brokerage' },
-            { title: 'Trading & Crypto Advisory', desc: 'Share Market & Digital Assets' },
+            { title: 'Real Estate Advisory', desc: 'Commercial & Residential Services' },
+            { title: 'Import & Export Support', desc: 'B2B Sourcing & Trade Facilitation' },
             { title: 'Education & Admissions', desc: 'School & University Counseling' },
             { title: 'Photography & Shoot', desc: 'Studio Production & Video Editing' },
-            { title: 'Music & Film Studio', desc: 'Audio Recording & Entertainment' },
-            { title: 'E-Commerce Marketplace', desc: 'Electronics, Fashion & Retail' },
-            { title: 'MLM & Book Publishing', desc: 'Author Royalties & Network Tools' },
-            { title: 'Astrology & Palmistry', desc: 'Horoscope, Jyotish & Vaastu' },
+            { title: 'Media & Audio Studio', desc: 'Corporate Audio & Brand Production' },
+            { title: 'E-Commerce Setup', desc: 'Online Storefronts & Catalog Ops' },
+            { title: 'Book Publishing', desc: 'Editorial, Print & ISBN Support' },
+            { title: 'Hospitality & Events', desc: 'Corporate Conferences & Events' },
             { title: 'Job Consultancy & HR', desc: 'Recruitment & Placement Solutions' }
           ].map((srv, idx) => (
             <div key={idx} className="p-4 bg-white/5 border border-white/10 rounded-xl space-y-1 hover:bg-white/10 transition-colors">
@@ -611,10 +648,11 @@ export function FranchisePlansView({
         </div>
       </div>
 
-      {/* Success Stories & Documented Franchise Growth */}
+      {/* Transparent 5-Stage Onboarding Workflow */}
       <SuccessStoriesSection
         currency={currency}
         onSelectPlan={onSelectPlan}
+        onNavigate={onNavigate}
       />
 
       {/* Verified Legal Documents, Certificates & Corporate Banking Showcase */}

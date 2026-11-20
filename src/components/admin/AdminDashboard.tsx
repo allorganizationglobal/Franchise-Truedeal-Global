@@ -29,16 +29,23 @@ import {
   RefreshCw,
   Phone,
   Mail,
-  UserPlus
+  UserPlus,
+  Package,
+  Scale,
+  Inbox,
+  Save
 } from 'lucide-react';
 import {
   FranchiseApplication,
   UserRole,
   DocumentUpload,
   ApplicationStatus,
-  DocumentStatus
+  DocumentStatus,
+  CompanyComplianceConfig,
+  ContactInquiry,
+  FranchisePlan
 } from '../../types/franchise';
-import { FRANCHISE_PLANS, FranchiseStorageService, getPlanById } from '../../services/storage';
+import { FranchiseStorageService, getPlanById } from '../../services/storage';
 import { NotificationService } from '../../services/notificationService';
 import { BiometricPromptModal } from '../common/BiometricPromptModal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
@@ -61,6 +68,9 @@ type AdminSection =
   | 'pipeline'
   | 'documents'
   | 'payments'
+  | 'packages'
+  | 'compliance'
+  | 'inquiries'
   | 'reports'
   | 'audit'
   | 'team'
@@ -119,13 +129,103 @@ export function AdminDashboard({
     { email: 'support@truedealglobal.com', role: 'support_staff' as UserRole, name: 'Franchise Support Desk' }
   ]);
 
+  // Admin-configurable compliance settings, franchise packages, and customer inquiries
+  const [complianceForm, setComplianceForm] = useState<CompanyComplianceConfig>(() =>
+    FranchiseStorageService.getComplianceConfig()
+  );
+  const [complianceSavedBanner, setComplianceSavedBanner] = useState(false);
+
+  const [plansList, setPlansList] = useState<FranchisePlan[]>(() =>
+    FranchiseStorageService.getPlans()
+  );
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null);
+  const [planDraft, setPlanDraft] = useState<{
+    priceINR: number;
+    activationTimeline: string;
+    refundEligibility: string;
+    subtitle: string;
+  }>({
+    priceINR: 0,
+    activationTimeline: '',
+    refundEligibility: '',
+    subtitle: ''
+  });
+
+  const [inquiries, setInquiries] = useState<ContactInquiry[]>(() =>
+    FranchiseStorageService.getContactInquiries()
+  );
+  const [inquiryFilter, setInquiryFilter] = useState<'all' | ContactInquiry['status']>('all');
+
   const refreshData = () => {
     const fresh = FranchiseStorageService.getApplications();
     setApplications(fresh);
+    setPlansList(FranchiseStorageService.getPlans());
+    setComplianceForm(FranchiseStorageService.getComplianceConfig());
+    setInquiries(FranchiseStorageService.getContactInquiries());
     if (selectedApp) {
       setSelectedApp(fresh.find(a => a.id === selectedApp.id) || null);
     }
     onRefresh();
+  };
+
+  const handleSaveCompliance = (e: React.FormEvent) => {
+    e.preventDefault();
+    const saved = FranchiseStorageService.saveComplianceConfig(
+      complianceForm,
+      currentUser?.email || 'director@truedealglobal.com'
+    );
+    setComplianceForm(saved);
+    setComplianceSavedBanner(true);
+    NotificationService.addNotification(
+      'Compliance Settings Saved',
+      'Legal identity, GST configuration, and Grievance Officer details updated across all public legal pages.',
+      'success'
+    );
+    setTimeout(() => setComplianceSavedBanner(false), 4000);
+    onRefresh();
+  };
+
+  const handleStartEditPlan = (plan: FranchisePlan) => {
+    setEditingPlanId(plan.id);
+    setPlanDraft({
+      priceINR: plan.priceINR,
+      activationTimeline: plan.activationTimeline || '5-7 Business Days post KYC & Fee Verification',
+      refundEligibility:
+        plan.refundEligibility ||
+        `Eligible within ${complianceForm.refundWindowDays} calendar days prior to license/portal activation per Refund Policy.`,
+      subtitle: plan.subtitle
+    });
+  };
+
+  const handleSavePlanOverride = (planId: string) => {
+    if (!Number.isFinite(planDraft.priceINR) || planDraft.priceINR < 100) return;
+    const updatedPlans = FranchiseStorageService.updatePlanOverride(
+      planId,
+      {
+        priceINR: Math.round(planDraft.priceINR),
+        activationTimeline: planDraft.activationTimeline.trim(),
+        refundEligibility: planDraft.refundEligibility.trim(),
+        subtitle: planDraft.subtitle.trim()
+      },
+      currentUser?.email || 'director@truedealglobal.com'
+    );
+    setPlansList(updatedPlans);
+    setEditingPlanId(null);
+    NotificationService.addNotification(
+      'Package Pricing Updated',
+      `Updated pricing and terms for ${planId} across public catalog and checkout summary.`,
+      'success'
+    );
+    onRefresh();
+  };
+
+  const handleUpdateInquiryStatus = (id: string, status: ContactInquiry['status']) => {
+    const updated = FranchiseStorageService.updateContactInquiryStatus(
+      id,
+      status,
+      currentUser?.email || 'director@truedealglobal.com'
+    );
+    setInquiries(updated);
   };
 
   // Filter applications
@@ -492,6 +592,45 @@ export function AdminDashboard({
           >
             <CreditCard className="w-3.5 h-3.5" />
             <span>Payments ({allPayments.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection('packages')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeSection === 'packages'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <Package className="w-3.5 h-3.5" />
+            <span>Packages ({plansList.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection('compliance')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeSection === 'compliance'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <Scale className="w-3.5 h-3.5" />
+            <span>Compliance</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection('inquiries')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeSection === 'inquiries'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <Inbox className="w-3.5 h-3.5" />
+            <span>Inquiries ({inquiries.length})</span>
           </button>
 
           <button
@@ -1300,6 +1439,426 @@ export function AdminDashboard({
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* SECTION 9: FRANCHISE PACKAGES & PRICING MANAGEMENT */}
+      {activeSection === 'packages' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Franchise Packages &amp; INR Pricing Management
+              </h3>
+              <p className="text-xs text-slate-500">
+                Manage official franchise package pricing (INR), activation timelines, and refund disclosures synced with the Pricing page and checkout summary.
+              </p>
+            </div>
+            <span className="text-xs font-mono font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800">
+              {plansList.length} Active Tiers
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
+                <tr>
+                  <th className="py-3 px-4">Package</th>
+                  <th className="py-3 px-4">Base Price (INR)</th>
+                  <th className="py-3 px-4">USD Reference</th>
+                  <th className="py-3 px-4">Activation Timeline</th>
+                  <th className="py-3 px-4">Refund Disclosure</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                {plansList.map(plan => {
+                  const isEditing = editingPlanId === plan.id;
+                  return (
+                    <tr key={plan.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 align-top">
+                      <td className="py-3 px-4">
+                        <div className="font-bold text-slate-900 dark:text-slate-100">{plan.title}</div>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={planDraft.subtitle}
+                            onChange={e => setPlanDraft({ ...planDraft, subtitle: e.target.value })}
+                            className="mt-1 w-full px-2 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
+                          />
+                        ) : (
+                          <div className="text-[11px] text-slate-500">{plan.subtitle}</div>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-slate-100">
+                        {isEditing ? (
+                          <input
+                            type="number"
+                            min={100}
+                            step={1}
+                            value={planDraft.priceINR}
+                            onChange={e => setPlanDraft({ ...planDraft, priceINR: Number(e.target.value) })}
+                            className="w-28 px-2 py-1 text-xs font-mono bg-white dark:bg-slate-800 border border-indigo-400 rounded"
+                          />
+                        ) : (
+                          `₹${plan.priceINR.toLocaleString('en-IN')}`
+                        )}
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-600 dark:text-slate-400">
+                        ${plan.priceUSD.toLocaleString('en-US')}
+                      </td>
+                      <td className="py-3 px-4 text-slate-700 dark:text-slate-300">
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={planDraft.activationTimeline}
+                            onChange={e => setPlanDraft({ ...planDraft, activationTimeline: e.target.value })}
+                            className="w-full px-2 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
+                          />
+                        ) : (
+                          plan.activationTimeline || '5-7 Business Days post KYC & Fee Verification'
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 max-w-xs">
+                        {isEditing ? (
+                          <textarea
+                            rows={2}
+                            value={planDraft.refundEligibility}
+                            onChange={e => setPlanDraft({ ...planDraft, refundEligibility: e.target.value })}
+                            className="w-full px-2 py-1 text-[11px] bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded"
+                          />
+                        ) : (
+                          plan.refundEligibility || `Eligible within ${complianceForm.refundWindowDays} calendar days prior to activation`
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right whitespace-nowrap">
+                        {isEditing ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleSavePlanOverride(plan.id)}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingPlanId(null)}
+                              className="px-2.5 py-1 bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg text-[11px] font-semibold"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditPlan(plan)}
+                            className="px-3 py-1 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 rounded-lg text-[11px] font-bold"
+                          >
+                            Edit Terms
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION 10: COMPANY COMPLIANCE & RAZORPAY MERCHANT SETTINGS */}
+      {activeSection === 'compliance' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Company Compliance &amp; Legal Policy Settings
+              </h3>
+              <p className="text-xs text-slate-500">
+                Enter verified corporate statutory details (CIN, GSTIN, Registered Office Address, Grievance Officer) for Razorpay merchant onboarding. Blank fields are never fabricated on public pages.
+              </p>
+            </div>
+            <span className="text-[11px] font-mono font-bold px-3 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+              Razorpay: {complianceForm.razorpayStatus.replace(/_/g, ' ').toUpperCase()}
+            </span>
+          </div>
+
+          {complianceSavedBanner && (
+            <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs font-semibold text-emerald-800 dark:text-emerald-300 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>Compliance configuration saved and reflected across all public legal, pricing, and checkout pages.</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveCompliance} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Corporate Identification Number (CIN)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. U74999UP2020OPC123456 (Leave blank until confirmed from MCA)"
+                  value={complianceForm.cin}
+                  onChange={e => setComplianceForm({ ...complianceForm, cin: e.target.value.toUpperCase() })}
+                  className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  GSTIN (15-Character GST Identification Number)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 09AAACT1234A1Z5 (Leave blank if unregistered or pending)"
+                  value={complianceForm.gstin}
+                  onChange={e => setComplianceForm({ ...complianceForm, gstin: e.target.value.toUpperCase() })}
+                  className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  GST Pricing Treatment
+                </label>
+                <select
+                  value={complianceForm.gstStatus}
+                  onChange={e =>
+                    setComplianceForm({
+                      ...complianceForm,
+                      gstStatus: e.target.value as CompanyComplianceConfig['gstStatus']
+                    })
+                  }
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                >
+                  <option value="pending_confirmation">Pending Company GST Confirmation</option>
+                  <option value="excluded">GST Excluded (Added Extra on Tax Invoice)</option>
+                  <option value="included">GST Included in Published Package Price</option>
+                  <option value="not_applicable">GST Not Applicable (Below Threshold / Exempt)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Applicable GST Rate (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={28}
+                  value={complianceForm.gstRatePercent}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, gstRatePercent: Number(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Full MCA Registered Office Street Address (with PIN Code)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Enter exact registered office address as per MCA Certificate of Incorporation (Leave blank until confirmed)"
+                  value={complianceForm.registeredOfficeAddress}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, registeredOfficeAddress: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Appointed Grievance Officer Full Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter designated Grievance Officer name"
+                  value={complianceForm.grievanceOfficerName}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, grievanceOfficerName: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Grievance Officer Designation
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Compliance & Grievance Officer"
+                  value={complianceForm.grievanceOfficerDesignation}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, grievanceOfficerDesignation: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Customer Support Phone
+                </label>
+                <input
+                  type="text"
+                  value={complianceForm.supportPhone}
+                  onChange={e => setComplianceForm({ ...complianceForm, supportPhone: e.target.value })}
+                  className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Support Business Hours
+                </label>
+                <input
+                  type="text"
+                  value={complianceForm.supportHours}
+                  onChange={e => setComplianceForm({ ...complianceForm, supportHours: e.target.value })}
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Pre-Activation Refund Request Window (Calendar Days)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={complianceForm.refundWindowDays}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, refundWindowDays: Number(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 font-mono bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300 block mb-1">
+                  Approved Refund Processing Timeline
+                </label>
+                <input
+                  type="text"
+                  value={complianceForm.refundProcessingTimeline}
+                  onChange={e =>
+                    setComplianceForm({ ...complianceForm, refundProcessingTimeline: e.target.value })
+                  }
+                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
+              <span className="text-[11px] text-slate-500">
+                Last Updated: {new Date(complianceForm.lastUpdatedAt).toLocaleString()}
+              </span>
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm transition-all"
+              >
+                <Save className="w-4 h-4" />
+                <span>Save Compliance Configuration</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* SECTION 11: CUSTOMER CONTACT & GRIEVANCE INQUIRIES */}
+      {activeSection === 'inquiries' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Customer Contact &amp; Grievance Inquiries
+              </h3>
+              <p className="text-xs text-slate-500">
+                Track inquiries submitted via the public Contact Us page (/contact) and update resolution status.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={inquiryFilter}
+                onChange={e => setInquiryFilter(e.target.value as 'all' | ContactInquiry['status'])}
+                className="px-3 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg"
+              >
+                <option value="all">All Inquiries ({inquiries.length})</option>
+                <option value="new">New</option>
+                <option value="in_progress">In Progress</option>
+                <option value="resolved">Resolved</option>
+              </select>
+            </div>
+          </div>
+
+          {inquiries.filter(i => inquiryFilter === 'all' || i.status === inquiryFilter).length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-500 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-dashed border-slate-200 dark:border-slate-700">
+              No contact inquiries recorded yet. Submissions from the public Contact Us page appear here with their reference codes.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
+                  <tr>
+                    <th className="py-3 px-4">Reference</th>
+                    <th className="py-3 px-4">Contact</th>
+                    <th className="py-3 px-4">Category &amp; Subject</th>
+                    <th className="py-3 px-4">Message</th>
+                    <th className="py-3 px-4">Submitted</th>
+                    <th className="py-3 px-4 text-right">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {inquiries
+                    .filter(i => inquiryFilter === 'all' || i.status === inquiryFilter)
+                    .map(inq => (
+                      <tr key={inq.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 align-top">
+                        <td className="py-3 px-4 font-mono font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                          {inq.referenceCode}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-semibold text-slate-900 dark:text-slate-100">{inq.name}</div>
+                          <div className="text-[11px] font-mono text-slate-500">{inq.email}</div>
+                          <div className="text-[11px] font-mono text-slate-500">{inq.phone}</div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold uppercase text-slate-600 dark:text-slate-300 mb-1">
+                            {inq.inquiryType.replace(/_/g, ' ')}
+                          </span>
+                          <div className="font-medium text-slate-800 dark:text-slate-200">{inq.subject}</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300 max-w-xs whitespace-pre-wrap">
+                          {inq.message}
+                        </td>
+                        <td className="py-3 px-4 text-[11px] text-slate-500 whitespace-nowrap">
+                          {new Date(inq.createdAt).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <select
+                            value={inq.status}
+                            onChange={e =>
+                              handleUpdateInquiryStatus(inq.id, e.target.value as ContactInquiry['status'])
+                            }
+                            className="px-2.5 py-1 text-[11px] font-semibold bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg"
+                          >
+                            <option value="new">New</option>
+                            <option value="in_progress">In Progress</option>
+                            <option value="resolved">Resolved</option>
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

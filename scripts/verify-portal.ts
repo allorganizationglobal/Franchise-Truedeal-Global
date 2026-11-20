@@ -4,7 +4,13 @@ import path from 'path';
 interface TestResult {
   name: string;
   passed: boolean;
-  category: 'SEO' | 'SECURITY' | 'APPLICANT_PORTAL' | 'PAYMENTS' | 'DATA_INTEGRITY';
+  category:
+    | 'SEO'
+    | 'SECURITY'
+    | 'APPLICANT_PORTAL'
+    | 'PAYMENTS'
+    | 'DATA_INTEGRITY'
+    | 'RAZORPAY_COMPLIANCE';
   message?: string;
 }
 
@@ -109,10 +115,26 @@ assert(trackerSource.includes('sessionStorage.setItem'), 'Secure scoped session 
 // CATEGORY 4: PAYMENT RELIABILITY & FRAUD PREVENTION
 // -------------------------------------------------------------------
 const paymentSource = fs.readFileSync(path.join(rootDir, 'src', 'components', 'common', 'PaymentModal.tsx'), 'utf8');
-assert(paymentSource.includes("const isOfflineBankTransfer = method === 'upi' || method === 'netbanking' || method === 'escrow_wire'"), 'Offline bank transfers identified separately from instant cards', 'PAYMENTS');
-assert(paymentSource.includes("const paymentStatus: 'completed' | 'processing' = isOfflineBankTransfer ? 'processing' : 'completed'"), 'Bank transfers/receipts marked as processing pending admin reconciliation', 'PAYMENTS');
-assert(!paymentSource.includes('cardCvc:'), 'Card security code (CVV/CVC) is never stored or persisted', 'PAYMENTS');
-assert(paymentSource.includes('cardLast4: method === \'card\' ? cardNumber.slice(-4) : undefined'), 'Only truncated card last4 stored for accounting compliance', 'PAYMENTS');
+assert(
+  paymentSource.includes("method: 'upi_bank_transfer'") && paymentSource.includes("status: 'processing'"),
+  'Offline corporate bank/UPI transfers always recorded as processing pending manual reconciliation',
+  'PAYMENTS'
+);
+assert(
+  !paymentSource.includes('binance_qr') && !paymentSource.includes('Binance Pay'),
+  'Prohibited crypto/Binance payment option removed from checkout modal',
+  'PAYMENTS'
+);
+assert(
+  !paymentSource.includes('cardCvc') && !paymentSource.includes('4242 8891 0023 9102'),
+  'No raw card number or CVV/CVC collection fields exist in frontend checkout',
+  'PAYMENTS'
+);
+assert(
+  paymentSource.includes('Online Payment Gateway Verification in Progress') && paymentSource.includes('Razorpay'),
+  'Razorpay online checkout transparently disabled pending merchant verification',
+  'PAYMENTS'
+);
 
 const adminSource = fs.readFileSync(path.join(rootDir, 'src', 'components', 'admin', 'AdminDashboard.tsx'), 'utf8');
 assert(adminSource.includes('updatePaymentStatus'), 'Admin dashboard includes interactive bank transfer verification & clearing', 'PAYMENTS');
@@ -138,9 +160,94 @@ assert(storageSource.includes("priceINR: 4999") && storageSource.includes("Stand
 assert(storageSource.includes("priceINR: 14999") && storageSource.includes("Corporate Plan"), 'Corporate Plan verified at ₹14,999 INR', 'DATA_INTEGRITY');
 assert(storageSource.includes("priceINR: 49999") && storageSource.includes("Platinum Plan"), 'Platinum Plan verified at ₹49,999 INR', 'DATA_INTEGRITY');
 
+// -------------------------------------------------------------------
+// CATEGORY 7: RAZORPAY MERCHANT VERIFICATION & LEGAL COMPLIANCE
+// -------------------------------------------------------------------
+const appSource = fs.readFileSync(path.join(rootDir, 'src', 'App.tsx'), 'utf8');
+const footerSource = fs.readFileSync(path.join(rootDir, 'src', 'components', 'layout', 'Footer.tsx'), 'utf8');
+const seoSource = fs.readFileSync(path.join(rootDir, 'src', 'utils', 'seo.ts'), 'utf8');
+const sitemapContent = fs.readFileSync(sitemapPath, 'utf8');
+const langSource = fs.readFileSync(path.join(rootDir, 'src', 'context', 'LanguageContext.tsx'), 'utf8');
+const plansViewSource = fs.readFileSync(path.join(rootDir, 'src', 'components', 'portal', 'FranchisePlansView.tsx'), 'utf8');
+const apiDocsSource = fs.readFileSync(path.join(rootDir, 'src', 'components', 'docs', 'ApiDocsView.tsx'), 'utf8');
+
+const requiredLegalFiles = [
+  'src/components/legal/LegalPages.tsx',
+  'src/components/legal/ContactUsPage.tsx',
+  'src/components/legal/PricingTransparencyPage.tsx',
+  'src/config/complianceConfig.ts',
+  'src/server/razorpayArchitecture.ts',
+  'api/contact.ts'
+];
+for (const relFile of requiredLegalFiles) {
+  assert(fs.existsSync(path.join(rootDir, relFile)), `Compliance module exists: ${relFile}`, 'RAZORPAY_COMPLIANCE');
+}
+
+const requiredCleanPaths = [
+  '/about',
+  '/contact',
+  '/pricing',
+  '/terms',
+  '/privacy-policy',
+  '/refund-policy',
+  '/cancellation-policy',
+  '/franchise-terms',
+  '/grievance-redressal',
+  '/delivery-policy'
+];
+assert(
+  requiredCleanPaths.every(p => appSource.includes(`'${p}'`) && seoSource.includes(p) && sitemapContent.includes(p)),
+  'All 10 public legal/transparency routes wired in App router, SEO config, and sitemap.xml',
+  'RAZORPAY_COMPLIANCE'
+);
+const requiredFooterTabIds = [
+  'about',
+  'contact',
+  'pricing',
+  'terms',
+  'privacy',
+  'refund',
+  'cancellation',
+  'franchise-terms',
+  'grievance',
+  'delivery'
+];
+assert(
+  requiredFooterTabIds.every(id => footerSource.includes(`id: '${id}'`)),
+  'Footer exposes links to all 10 mandatory legal & transparency pages',
+  'RAZORPAY_COMPLIANCE'
+);
+
+const publicTextBundle = [indexHtml, footerSource, langSource, plansViewSource, storageSource, apiDocsSource, paymentSource].join('\n');
+assert(
+  !publicTextBundle.includes('ISO 9001:2015'),
+  'No unverified ISO 9001:2015 certification claim in customer-facing code',
+  'RAZORPAY_COMPLIANCE'
+);
+assert(
+  !/Astrology|Cryptocurrency|Binance Pay|tdg_live_sec_9934a81bc2|franchisebusiness\.truedealglobal\.com/i.test(publicTextBundle),
+  'No restricted verticals (Astrology/Crypto), hardcoded tokens, or wrong domain references in customer-facing code',
+  'RAZORPAY_COMPLIANCE'
+);
+assert(
+  appSource.includes('currentUser={currentUser}') && appSource.includes('onSignInGoogle={handleSignInGoogle}'),
+  'AnalyticsView and AdminDashboard both receive authenticated currentUser and sign-in handler',
+  'RAZORPAY_COMPLIANCE'
+);
+assert(
+  wizardSource.includes('consentNoGuarantee') && wizardSource.includes("status: 'submitted'"),
+  'ApplicationWizard requires no-income-guarantee consent and sets manual-review submitted status',
+  'RAZORPAY_COMPLIANCE'
+);
+assert(
+  adminSource.includes("activeSection === 'compliance'") && adminSource.includes("activeSection === 'packages'") && adminSource.includes("activeSection === 'inquiries'"),
+  'AdminDashboard provides Packages, Compliance Settings, and Contact Inquiries consoles',
+  'RAZORPAY_COMPLIANCE'
+);
+
 // Summary Reporting
 console.log('TEST SUMMARY BY CATEGORY:');
-const categories = ['SEO', 'SECURITY', 'APPLICANT_PORTAL', 'PAYMENTS', 'DATA_INTEGRITY'] as const;
+const categories = ['SEO', 'SECURITY', 'APPLICANT_PORTAL', 'PAYMENTS', 'DATA_INTEGRITY', 'RAZORPAY_COMPLIANCE'] as const;
 
 let totalPassed = 0;
 for (const cat of categories) {

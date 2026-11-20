@@ -10,8 +10,11 @@ import {
   PaymentRecord,
   ReviewNote,
   UserRole,
-  Currency
+  Currency,
+  CompanyComplianceConfig,
+  ContactInquiry
 } from '../types/franchise';
+import { DEFAULT_COMPLIANCE_CONFIG } from '../config/complianceConfig';
 import { calculateSha256, generateAuditChecksum } from '../utils/crypto';
 import { syncApplicationToFirestore, syncAuditLogToFirestore } from './firebase';
 
@@ -31,7 +34,7 @@ export function formatPrice(inrAmount: number, currency: Currency = 'INR'): stri
   return '$' + usd.toLocaleString('en-US');
 }
 
-// Official TrueDeal Global Franchise Plans Catalog (from franchise.truedealglobal.com)
+// Official TRUEDEAL GLOBAL OPC PVT LTD Franchise Plans Catalog (Razorpay-Compliant Business Verticals)
 export const FRANCHISE_PLANS: FranchisePlan[] = [
   {
     id: 'plan_basic',
@@ -42,27 +45,29 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     labelColor: 'bg-blue-600',
     color: 'border-blue-600',
     btnColor: 'bg-blue-600',
-    subtitle: 'Affiliate marketer entry access to 5+ high-demand business services with basic marketing kit and direct commission payouts.',
+    subtitle: 'Entry-level partner access to 5+ digital & business service categories with marketing kit and structured partner support.',
     priceINR: 2500,
     priceUSD: calculateUSDPrice(2500),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '10-15% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
-    validity: 'Lifetime Validity',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
+    validity: 'Lifetime Validity (Subject to Agreement Terms)',
     servicesCovered: '5+ Business Services (Web Development, Digital Marketing & Support)',
-    territoryScope: 'Remote / Work from Anywhere Worldwide',
+    territoryScope: 'Remote / Digital Service Territory',
+    activationTimeline: '2–5 business days after document verification and agreement execution',
     features: [
       '5+ Business Services Access',
       'Web Development Franchise',
       'Digital Marketing Support',
       'Email Support',
-      'Certificate & ID Card',
-      'Commission: 10-15%',
-      'Territory Protection',
+      'Certificate & Partner ID Card',
+      'Commission: 10-15% on Verified Deals',
       'Basic Marketing Kit',
-      'Lifetime Validity'
+      'Zero Annual Royalty Fee'
     ],
-    idealCandidate: 'Home-based entrepreneurs, students, freelancers, digital marketers starting out.'
+    idealCandidate: 'Home-based entrepreneurs, consultants, freelancers, and digital marketers starting out.'
   },
   {
     id: 'plan_standard',
@@ -74,32 +79,34 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     color: 'border-orange-500',
     btnColor: 'bg-orange-500',
     popular: true,
-    subtitle: 'Legally registered franchise license granting complete commercial rights across 20+ franchise packages, marketing collateral, and lifetime support.',
+    subtitle: 'Registered franchise license granting commercial partner rights across 20+ verified business service categories, marketing collateral, and onboarding training.',
     priceINR: 4999,
     priceUSD: calculateUSDPrice(4999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '15-25% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
     validity: 'Lifetime Registered Franchise License',
-    servicesCovered: '20+ Franchise Packages (IT, Real Estate, Education, Visa & Travel)',
+    servicesCovered: '20+ Business Service Packages (IT, Real Estate, Education, Visa & Travel)',
     territoryScope: 'District / Digital Territory Rights',
+    activationTimeline: '3–5 business days after KYC verification and agreement execution',
     features: [
-      '20+ Franchise Packages',
-      'Web Development',
-      'Real Estate Services',
-      'Education & Visa Services',
-      'Tour & Travel',
-      'Trading & Import/Export',
-      'Cryptocurrency Services',
-      'Social Media Promotion',
-      'Complete IT Services',
-      'Professional Training',
-      'Marketing Materials',
-      'Commission: 15-25%',
+      '20+ Approved Service Packages',
+      'Web & Mobile App Development',
+      'Real Estate Consultancy Support',
+      'Education & Visa Documentation Assistance',
+      'Tour & Travel Packages',
+      'Import/Export Documentation Support',
+      'Social Media & Brand Promotion',
+      'Complete IT Services Fulfillment',
+      'Professional Onboarding Training',
+      'Marketing Materials & Collateral',
+      'Commission: 15-25% on Verified Deals',
       'Phone & Email Support',
       'Business Setup Guidance'
     ],
-    idealCandidate: 'Small business owners, travel consultants, retail professionals seeking multi-industry expansion.'
+    idealCandidate: 'Small business owners, travel consultants, and service agencies seeking multi-industry expansion.'
   },
   {
     id: 'plan_corporate',
@@ -110,32 +117,35 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     labelColor: 'bg-purple-600',
     color: 'border-purple-600',
     btnColor: 'bg-purple-600',
-    subtitle: 'Expanded commercial rights with multimedia production, e-commerce, custom website development, and business coaching.',
+    subtitle: 'Expanded commercial rights with multimedia production, e-commerce enablement, custom website development, and structured business onboarding.',
     priceINR: 14999,
     priceUSD: calculateUSDPrice(14999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '25-35% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
     validity: 'Lifetime Corporate License',
-    servicesCovered: 'All Standard Plan + Media, Music, E-Commerce, MLM & Publishing',
-    territoryScope: 'Multi-District / State Regional Priority',
+    servicesCovered: 'All Standard Plan + Media, Studio Production, E-Commerce & Book Publishing',
+    territoryScope: 'Multi-District / Regional Priority',
+    activationTimeline: '3–7 business days after KYC verification and agreement execution',
     features: [
       'All Standard Plan Benefits',
-      'Photography & Video Shoot',
-      'Music Record Studio',
-      'E-commerce Products',
-      'MLM & Book Publishing',
-      'Film Making Services',
-      'Job Consultancy',
-      'Medical Assistance',
+      'Photography & Video Production Support',
+      'Music & Audio Studio Services',
+      'E-Commerce Store Setup & Catalogs',
+      'Book Publishing & Editorial Services',
+      'Commercial Film Production Support',
+      'HR & Recruitment Consultancy',
+      'Medical Tourism & Assistance Coordination',
       'Premium Marketing Suite',
-      'Advanced Training Program',
-      'Commission: 25-35%',
-      'Priority Support',
-      'Custom Website Development',
-      'Business Coaching'
+      'Advanced Partner Training Program',
+      'Commission: 25-35% on Verified Deals',
+      'Priority Partner Support',
+      'Custom Partner Website Setup',
+      'Structured Business Onboarding'
     ],
-    idealCandidate: 'Regional agencies, media consultants, corporate executives, experienced business promoters.'
+    idealCandidate: 'Regional agencies, media consultants, corporate executives, and established service businesses.'
   },
   {
     id: 'plan_platinum',
@@ -146,33 +156,35 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     labelColor: 'bg-indigo-600',
     color: 'border-indigo-600',
     btnColor: 'bg-indigo-600',
-    subtitle: 'Master partner tier featuring white-label rights, multi-city territory exclusivity, dedicated account director, and international leads.',
+    subtitle: 'Master partner tier featuring white-label operational support, multi-city territory alignment, dedicated account manager, and expanded service verticals.',
     priceINR: 49999,
     priceUSD: calculateUSDPrice(49999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '35-45% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
     validity: 'Lifetime Master License',
-    servicesCovered: 'Full Suite + Astrology, Food & Fun, Auto Sales, Construction & Matrimonial',
+    servicesCovered: 'Full Approved Suite + Hospitality, Events, Auto Brokerage, Civil & Interior Design',
     territoryScope: 'Multi-City / Zonal Territory Rights',
+    activationTimeline: '5–7 business days after due diligence and legal agreement execution',
     features: [
       'All Corporate Plan Benefits',
-      'Astrology & Palmistry Services',
-      'Food & Fun Services',
-      'School/College Admission Assist',
-      'Car & Bike Sales (New/Old)',
-      'Civil Work Services',
-      'Matrimonial Services',
-      'Cloth & Accessories Design',
-      'Interior & Exterior Design',
-      'White Label Rights',
-      'Commission: 35-45%',
-      '24/7 Priority Support',
+      'Hospitality, Events & Catering Support',
+      'School & College Admission Counseling',
+      'Automobile Dealership & Brokerage Support',
+      'Civil Engineering & Construction Leads',
+      'Matrimonial Portal Coordination',
+      'Apparel & Accessories Design Support',
+      'Interior & Exterior Design Services',
+      'White-Label Operational Rights',
+      'Commission: 35-45% on Verified Deals',
+      'Priority Support Desk',
       'Master Training Program',
       'Dedicated Account Manager',
-      'Multi-City Territory Rights'
+      'Multi-City Territory Allocation'
     ],
-    idealCandidate: 'Established entrepreneurs, high-volume operators, zonal distributors, corporate syndicates.'
+    idealCandidate: 'Established entrepreneurs, high-volume service operators, and regional distributors.'
   },
   {
     id: 'plan_entrepreneur',
@@ -183,69 +195,70 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     labelColor: 'bg-green-600',
     color: 'border-green-600',
     btnColor: 'bg-green-600',
-    subtitle: 'Nationwide authority with state-level territory monopoly, sub-franchise recruitment authority, and CRM marketing automation.',
+    subtitle: 'State-level franchise authorization with territory coordination, sub-franchise onboarding rights, and CRM workflow integration.',
     priceINR: 99999,
     priceUSD: calculateUSDPrice(99999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '45-55% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
-    validity: 'Lifetime Nationwide Partnership',
-    servicesCovered: 'Complete Business Ecosystem & Unlimited Enterprise Services',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
+    validity: 'Lifetime State Partnership',
+    servicesCovered: 'Complete Approved Business Service Portfolio & CRM Enablement',
     territoryScope: 'State-Level Territory Rights',
+    activationTimeline: '5–10 business days after due diligence and agreement execution',
     features: [
       'All Platinum Plan Benefits',
-      'Complete Business Ecosystem',
-      'Full Service Portfolio Access',
-      'Advanced Marketing Automation',
+      'Complete Approved Service Portfolio',
+      'Marketing Workflow Automation',
       'CRM System Integration',
-      'Custom Branding Solutions',
-      'Sub-Franchise Rights',
-      'Revenue Sharing Programs',
-      'Commission: 45-55%',
+      'Custom Branding Collateral',
+      'Sub-Franchise Onboarding Rights',
+      'Structured Revenue Sharing Model',
+      'Commission: 45-55% on Verified Deals',
       'Executive Support Team',
       'Quarterly Business Reviews',
-      'State-level Territory Rights',
-      'International Market Access',
-      'Master Franchise Authority'
+      'State-Level Territory Alignment',
+      'Cross-Border Service Coordination',
+      'Master Franchise Administration'
     ],
-    idealCandidate: 'Serial franchise owners, state distributor networks, investment consortiums.'
+    idealCandidate: 'Experienced franchise operators, state distributor networks, and corporate entities.'
   },
   {
     id: 'plan_retirement',
     tier: 'retirement',
-    title: 'Retirement Plan',
-    badge: 'Passive Wealth',
-    label: 'Passive Wealth',
+    title: 'Legacy & Succession Plan',
+    badge: 'Succession Tier',
+    label: 'Succession Tier',
     labelColor: 'bg-blue-500',
     color: 'border-blue-500',
     btnColor: 'bg-blue-500',
-    subtitle: 'Passive income generation with retirement-focused services, family succession planning, and lifetime multi-generation rights.',
+    subtitle: 'Long-term franchise operating license with structured business continuity, family nomination rights, and executive account support.',
     priceINR: 149999,
     priceUSD: calculateUSDPrice(149999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '55-65% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
-    validity: 'Multi-Generation Lifetime Rights',
-    servicesCovered: 'Complete Portfolio + Wealth Preservation, Passive Streams & Retirement Suite',
-    territoryScope: 'Premium Territory Rights & Exclusive Market',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
+    validity: 'Transferable Family Succession Rights (Per Agreement)',
+    servicesCovered: 'Complete Approved Service Portfolio + Business Continuity & Succession Administration',
+    territoryScope: 'Premium Territory Rights & Priority Market',
+    activationTimeline: '7–10 business days after legal review and agreement execution',
     features: [
       'All Entrepreneur Plan Benefits',
-      'Passive Income Generation',
-      'Retirement-focused Services',
-      'Legacy Business Building',
-      'Family Succession Planning',
-      'Long-term Wealth Creation',
-      'Premium Territory Rights',
-      'Exclusive Market Access',
-      'Commission: 55-65%',
-      'C-Level Executive Support',
-      'Lifetime Business Coaching',
-      'Multi-Generation Rights',
-      'Global Network Access',
-      'Premium Partnership Benefits',
-      'Retirement Security Package'
+      'Family Nominee & Succession Clause',
+      'Managed Fulfillment Coordination',
+      'Long-Term Brand Continuity Support',
+      'Premium Territory Alignment',
+      'Priority Account Operations',
+      'Commission: 55-65% on Verified Deals',
+      'Senior Executive Support Desk',
+      'Ongoing Business Operations Coaching',
+      'Transferable License Rights (Per Agreement)',
+      'International Service Desk Access'
     ],
-    idealCandidate: 'Senior executives, retirement investors, family offices seeking multi-generational passive cash flow.'
+    idealCandidate: 'Senior business owners and family enterprises establishing a transferable service franchise.'
   },
   {
     id: 'plan_enterprise',
@@ -256,29 +269,31 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     labelColor: 'bg-purple-500',
     color: 'border-purple-500',
     btnColor: 'bg-purple-500',
-    subtitle: 'Full enterprise ecosystem with enterprise-level training, advanced CRM integration, and master franchise authority.',
+    subtitle: 'Full enterprise franchise ecosystem with advanced CRM integration, dedicated operations team, and multi-state coordination.',
     priceINR: 499999,
     priceUSD: calculateUSDPrice(499999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '65-75% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (Direct Bank Transfer / Wire)',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank Settlement (Subject to Invoice Clearance)',
     validity: 'Lifetime Enterprise Authority',
-    servicesCovered: 'Custom Enterprise Solutions, Global Expansion & Full Service Stack',
+    servicesCovered: 'Custom Enterprise Solutions, Multi-State Operations & Full Approved Service Stack',
     territoryScope: 'State-Level / Multi-State Territory Authority',
+    activationTimeline: '7–14 business days after legal due diligence and agreement execution',
     features: [
-      'Complete Business Ecosystem',
+      'Complete Approved Business Ecosystem',
       'Full Marketing Automation Suite',
       'Executive Support Team',
-      'Enterprise-level Training',
-      'State-level Territory Rights',
-      'Commission: 65-75%',
-      'Custom Enterprise Solutions',
+      'Enterprise-Level Staff Training',
+      'Multi-State Territory Alignment',
+      'Commission: 65-75% on Verified Deals',
+      'Custom Enterprise Delivery Workflows',
       'Advanced CRM Integration',
-      'Master Franchise Authority',
-      'Revenue Sharing Programs',
-      'International Expansion Rights'
+      'Master Franchise Administration',
+      'Cross-Border Operations Support'
     ],
-    idealCandidate: 'Enterprise consortiums, large investment funds, regional corporate operators.'
+    idealCandidate: 'Enterprise groups, corporate agencies, and regional commercial operators.'
   },
   {
     id: 'plan_global',
@@ -290,38 +305,40 @@ export const FRANCHISE_PLANS: FranchisePlan[] = [
     color: 'border-yellow-600',
     btnColor: 'bg-yellow-600',
     popular: true,
-    subtitle: 'Global franchise network access across Dubai, Melbourne, Texas, London, Singapore & Canada with up to 85% commission ceiling.',
+    subtitle: 'International master franchise framework supporting cross-border service delivery with up to 85% tier commission schedule and executive governance.',
     priceINR: 999999,
     priceUSD: calculateUSDPrice(999999),
+    applicationFeeINR: 0,
+    registrationFeeINR: 0,
     commissionRate: '75-85% Commission',
     referralBonus: '20% Direct Referral Commission',
-    payoutFrequency: 'Twice Weekly (International SWIFT / Escrow Wire / ACH)',
-    validity: 'Lifetime Worldwide Authority',
-    servicesCovered: 'Worldwide Expansion, International Master Franchise & Enterprise Stack',
-    territoryScope: 'Multi-Country / Worldwide Master Territory Rights',
+    payoutFrequency: 'Scheduled Bi-Weekly Bank / Wire Settlement (Subject to Compliance)',
+    validity: 'Lifetime International Master Agreement',
+    servicesCovered: 'International Master Franchise & Full Enterprise Service Delivery Stack',
+    territoryScope: 'Multi-Country / International Master Rights (Subject to Local Law)',
+    activationTimeline: '10–15 business days after international KYC & agreement execution',
     features: [
-      'Global Franchise Network Access',
-      'International Marketing Platforms',
-      'C-Level Executive Support',
-      'Global Business Training',
-      'Multi-Country Territory Rights',
-      'Commission: 75-85%',
-      'Custom Global Solutions',
-      'Enterprise-grade Technology Stack',
-      'International Master Franchise',
-      'Global Revenue Sharing',
-      'Worldwide Expansion Authority',
-      'Exclusive Partnership Benefits'
+      'International Franchise Network Access',
+      'Cross-Border Marketing & Proposal Kit',
+      'Senior Executive Support Desk',
+      'Global Operations Onboarding Training',
+      'Multi-Region Territory Alignment',
+      'Commission: 75-85% on Verified Deals',
+      'Custom Enterprise Service Integrations',
+      'Enterprise Technology & CRM Stack',
+      'International Master Franchise Agreement',
+      'Dedicated Compliance Liaison'
     ],
-    idealCandidate: 'International conglomerates, global diaspora investors, venture syndicates, multi-country operators.'
+    idealCandidate: 'International corporate entities and multi-region service operators.'
   }
 ];
 
 export function getPlanById(id: string): FranchisePlan | undefined {
+  const plans = FranchiseStorageService.getPlans();
   if (id === 'plan_global_enterprise') {
-    return FRANCHISE_PLANS.find(p => p.id === 'plan_global') || FRANCHISE_PLANS.find(p => p.id === 'plan_enterprise');
+    return plans.find(p => p.id === 'plan_global') || plans.find(p => p.id === 'plan_enterprise');
   }
-  return FRANCHISE_PLANS.find(p => p.id === id);
+  return plans.find(p => p.id === id);
 }
 
 // Initial mock applications
@@ -856,7 +873,10 @@ const STORAGE_KEYS = {
   EMAILS: 'truedeal_emails_v1',
   NOTIFICATIONS: 'truedeal_notifications_v1',
   OFFLINE_SIM: 'truedeal_offline_sim_active',
-  ACTIVE_ROLE: 'truedeal_active_role'
+  ACTIVE_ROLE: 'truedeal_active_role',
+  COMPLIANCE_CONFIG: 'truedeal_compliance_config_v1',
+  PLAN_OVERRIDES: 'truedeal_plan_overrides_v1',
+  CONTACT_INQUIRIES: 'truedeal_contact_inquiries_v1'
 };
 
 // Automated Evaluation Scoring Algorithm
@@ -1437,5 +1457,130 @@ export class FranchiseStorageService {
   static exportAuditLogsJson(): string {
     const logs = this.getAuditLogs();
     return JSON.stringify(logs, null, 2);
+  }
+
+  // Admin-Configurable Compliance & Policy Settings
+  static getComplianceConfig(): CompanyComplianceConfig {
+    if (typeof window === 'undefined') return DEFAULT_COMPLIANCE_CONFIG;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.COMPLIANCE_CONFIG);
+      if (!saved) return DEFAULT_COMPLIANCE_CONFIG;
+      return { ...DEFAULT_COMPLIANCE_CONFIG, ...JSON.parse(saved) };
+    } catch {
+      return DEFAULT_COMPLIANCE_CONFIG;
+    }
+  }
+
+  static saveComplianceConfig(
+    updates: Partial<CompanyComplianceConfig>,
+    actorEmail: string = 'director@truedealglobal.com'
+  ): CompanyComplianceConfig {
+    const current = this.getComplianceConfig();
+    const merged: CompanyComplianceConfig = {
+      ...current,
+      ...updates,
+      lastUpdatedAt: new Date().toISOString()
+    };
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.COMPLIANCE_CONFIG, JSON.stringify(merged));
+    }
+    this.recordAuditLog(
+      'COMPLIANCE_CONFIG_UPDATED',
+      'PORTAL_COMPLIANCE',
+      `Updated legal/tax compliance configuration (GST status: ${merged.gstStatus}, Refund window: ${merged.refundWindowDays} days).`,
+      'super_admin',
+      actorEmail
+    );
+    return merged;
+  }
+
+  // Admin-Configurable Franchise Plan Pricing & Details
+  static getPlans(): FranchisePlan[] {
+    if (typeof window === 'undefined') return FRANCHISE_PLANS;
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.PLAN_OVERRIDES);
+      if (!saved) return FRANCHISE_PLANS;
+      const overrides: Record<string, Partial<FranchisePlan>> = JSON.parse(saved);
+      return FRANCHISE_PLANS.map(plan => {
+        const override = overrides[plan.id];
+        if (!override) return plan;
+        const priceINR = typeof override.priceINR === 'number' && override.priceINR > 0 ? override.priceINR : plan.priceINR;
+        return {
+          ...plan,
+          ...override,
+          priceINR,
+          priceUSD: calculateUSDPrice(priceINR)
+        };
+      });
+    } catch {
+      return FRANCHISE_PLANS;
+    }
+  }
+
+  static updatePlanOverride(
+    planId: string,
+    updates: Partial<FranchisePlan>,
+    actorEmail: string = 'director@truedealglobal.com'
+  ): FranchisePlan[] {
+    if (typeof window !== 'undefined') {
+      let overrides: Record<string, Partial<FranchisePlan>> = {};
+      try {
+        const saved = localStorage.getItem(STORAGE_KEYS.PLAN_OVERRIDES);
+        if (saved) overrides = JSON.parse(saved);
+      } catch {}
+      overrides[planId] = { ...(overrides[planId] || {}), ...updates };
+      localStorage.setItem(STORAGE_KEYS.PLAN_OVERRIDES, JSON.stringify(overrides));
+    }
+    this.recordAuditLog(
+      'FRANCHISE_PLAN_UPDATED',
+      planId,
+      `Admin updated package details/pricing for ${planId}.`,
+      'super_admin',
+      actorEmail
+    );
+    return this.getPlans();
+  }
+
+  // Customer Contact Inquiries Storage
+  static getContactInquiries(): ContactInquiry[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.CONTACT_INQUIRIES);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveContactInquiry(inquiry: ContactInquiry): ContactInquiry {
+    const list = this.getContactInquiries();
+    list.unshift(inquiry);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.CONTACT_INQUIRIES, JSON.stringify(list.slice(0, 200)));
+    }
+    return inquiry;
+  }
+
+  static updateContactInquiryStatus(
+    id: string,
+    status: ContactInquiry['status'],
+    actorEmail: string = 'director@truedealglobal.com'
+  ): ContactInquiry[] {
+    const list = this.getContactInquiries();
+    const target = list.find(i => i.id === id);
+    if (target) {
+      target.status = status;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(STORAGE_KEYS.CONTACT_INQUIRIES, JSON.stringify(list));
+      }
+      this.recordAuditLog(
+        'CONTACT_INQUIRY_UPDATED',
+        id,
+        `Updated contact inquiry ${target.referenceCode} status to "${status}".`,
+        'support_staff',
+        actorEmail
+      );
+    }
+    return list;
   }
 }

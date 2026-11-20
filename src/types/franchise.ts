@@ -39,11 +39,20 @@ export interface FranchisePlan {
   subtitle: string;
   priceINR: number;
   priceUSD: number;
+  applicationFeeINR?: number;
+  registrationFeeINR?: number;
   commissionRate: string;
   referralBonus: string;
   payoutFrequency: string;
   validity: string;
   servicesCovered: string;
+  servicesExcluded?: string[];
+  franchiseRights?: string[];
+  additionalChargesNote?: string;
+  paymentSchedule?: string;
+  refundEligibility?: string;
+  cancellationConditions?: string;
+  activationTimeline?: string;
   territoryScope: string;
   features: string[];
   idealCandidate: string;
@@ -52,6 +61,59 @@ export interface FranchisePlan {
   labelColor?: string;
   color?: string;
   btnColor?: string;
+}
+
+export interface CompanyComplianceConfig {
+  legalName: string;
+  brandName: string;
+  mainWebsite: string;
+  franchisePortalUrl: string;
+  officialEmail: string;
+  supportPhone: string;
+  whatsappNumber: string;
+  supportHours: string;
+  operatingCityRegion: string;
+  registeredOfficeAddress: string;
+  cin: string;
+  gstin: string;
+  gstStatus: 'excluded' | 'included' | 'not_applicable' | 'pending_confirmation';
+  gstRatePercent: number;
+  applicationFeeINR: number;
+  grievanceOfficerName: string;
+  grievanceOfficerDesignation: string;
+  grievanceEmail: string;
+  grievancePhone: string;
+  grievanceResponseHours: number;
+  grievanceResolutionDays: number;
+  refundWindowDays: number;
+  refundProcessingTimeline: string;
+  jurisdictionCity: string;
+  razorpayStatus: 'pending_verification' | 'ready_for_integration';
+  bankDetails: {
+    beneficiaryName: string;
+    bankName: string;
+    accountType: string;
+    accountNumber: string;
+    ifscCode: string;
+    branchName: string;
+  };
+  lastUpdatedAt: string;
+}
+
+export interface ContactInquiry {
+  id: string;
+  referenceCode: string;
+  name: string;
+  email: string;
+  phone: string;
+  subject: string;
+  inquiryType: 'franchise_inquiry' | 'billing_refund' | 'grievance' | 'general_support';
+  message: string;
+  consentGiven: boolean;
+  createdAt: string;
+  status: 'new' | 'in_progress' | 'resolved';
+  crmSynced?: boolean;
+  emailDispatched?: boolean;
 }
 
 export type ApplicationStatus =
@@ -120,7 +182,7 @@ export interface PaymentRecord {
   type: 'application_fee' | 'franchise_deposit';
   amount: number;
   currency: string;
-  method: 'card' | 'ach' | 'escrow_wire';
+  method: 'card' | 'ach' | 'escrow_wire' | 'upi_bank_transfer' | 'razorpay_pending';
   status: 'completed' | 'processing' | 'failed';
   transactionHash: string;
   referenceCode: string;
@@ -128,6 +190,8 @@ export interface PaymentRecord {
   receiptNumber: string;
   cardLast4?: string;
   billingName: string;
+  gstAmount?: number;
+  totalWithGst?: number;
 }
 
 export interface ReviewNote {
@@ -201,6 +265,7 @@ export interface FranchiseApplication {
   biometricApprovalTimestamp?: string;
   assignedOfficer?: string;
   applicantBiometricEnrollment?: BiometricEnrollmentData;
+  policyConsentAcceptedAt?: string;
 }
 
 export interface BiometricEnrollmentData {
