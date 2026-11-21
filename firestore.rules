@@ -1,73 +1,450 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper: Check if user is authenticated with Firebase Auth
-    function isAuthenticated() {
+
+    // Global Default-Deny Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // Global Hardened Primitives
+    // ------------------------------------------------------------------
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    // Helper: Check if user is an authorized TrueDeal Global administrator
-    function isAuthorizedAdmin() {
-      return isAuthenticated() && 
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    // Zero-lookup verified bootstrap admin check (safe for allow list without get()/exists())
+    function isVerifiedBootstrapAdmin() {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
         (request.auth.token.email == 'allorganizationglobal@gmail.com' ||
          request.auth.token.email == 'director@truedealglobal.com' ||
-         request.auth.token.email.matches('.*@truedealglobal[.]com'));
+         request.auth.token.email.matches('^[^@]+@truedealglobal[.]com$'));
     }
 
-    // Helper: Check if authenticated user is the legitimate applicant owner of the record
-    function isApplicationOwner(applicantEmail) {
-      return isAuthenticated() && request.auth.token.email != null &&
-        request.auth.token.email.lower() == applicantEmail.lower();
+    // Full admin check for single-document operations (DB lookup + verified bootstrap admin)
+    function isAdmin() {
+      return isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
     }
 
-    // Helper: Validate application document structure on creation by public visitors
-    function isValidApplicationSubmission() {
-      let data = request.resource.data;
-      return data.id is string && data.id.size() > 0 && data.id.size() <= 64 &&
-             data.applicant is map &&
-             data.applicant.fullName is string && data.applicant.fullName.size() >= 2 &&
-             data.applicant.email is string && data.applicant.email.size() >= 5 &&
-             data.applicant.phone is string && data.applicant.phone.size() >= 8 &&
-             data.planId is string &&
-             data.status in ['submitted', 'under_review', 'automated_verified', 'draft'] &&
-             data.createdAt is string;
+    function isOwnerUid(uid) {
+      return isVerifiedUser() && uid is string && request.auth.uid == uid;
     }
 
-    // 1. Franchise Applications Collection
-    match /applications/{applicationId} {
-      // Authorized administrators can read all applications;
-      // Authenticated applicants can read ONLY their own application matching their verified email
-      allow read: if isAuthorizedAdmin() || 
-                     (resource != null && isApplicationOwner(resource.data.applicant.email));
-      
-      // Public visitors can submit a valid, well-formed new application
-      allow create: if isValidApplicationSubmission();
-      
-      // Only authorized administrators can update status, add review notes, or approve
-      allow update: if isAuthorizedAdmin();
-      
-      // Applications cannot be deleted
+    function isOwnerEmail(email) {
+      return isVerifiedUser() &&
+        request.auth.token.email is string &&
+        email is string &&
+        request.auth.token.email.lower() == email.lower();
+    }
+
+    // ------------------------------------------------------------------
+    // Validation Blueprints (Anti-Update-Gap & Strict Size Bounds)
+    // ------------------------------------------------------------------
+    function isValidUserProfile(data, uid) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'lastLoginAt']) &&
+        data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'lastLoginAt']) &&
+        data.uid is string && data.uid == uid && data.uid.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512)) &&
+        data.lastLoginAt is string && data.lastLoginAt.size() <= 64;
+    }
+
+    function isValidFranchiseApplication(data, appId) {
+      return data.keys().hasAll([
+          'applicationId', 'userId', 'applicantName', 'email', 'phone',
+          'franchisePlanId', 'franchisePlanName', 'amount', 'currency',
+          'applicationStatus', 'paymentStatus', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'applicationId', 'userId', 'applicantName', 'email', 'phone',
+          'franchisePlanId', 'franchisePlanName', 'amount', 'currency',
+          'applicationStatus', 'paymentStatus', 'paymentId', 'txnId',
+          'territoryRequested', 'createdAt', 'updatedAt'
+        ]) &&
+        data.applicationId is string && data.applicationId == appId && isValidId(data.applicationId) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.applicantName is string && data.applicantName.size() >= 2 && data.applicantName.size() <= 120 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.phone is string && data.phone.size() >= 7 && data.phone.size() <= 32 &&
+        data.franchisePlanId is string && data.franchisePlanId.size() >= 3 && data.franchisePlanId.size() <= 64 &&
+        data.franchisePlanName is string && data.franchisePlanName.size() >= 2 && data.franchisePlanName.size() <= 120 &&
+        data.amount is number && data.amount > 0 && data.amount <= 10000000 &&
+        data.currency in ['INR', 'USD'] &&
+        data.applicationStatus in [
+          'draft', 'PAYMENT_PENDING', 'submitted', 'under_review', 'documents_required',
+          'due_diligence', 'compliance_review', 'approved', 'rejected',
+          'agreement_pending', 'contract_issued', 'deposit_paid', 'onboarding',
+          'onboarded', 'automated_verified', 'revision_requested', 'declined'
+        ] &&
+        data.paymentStatus in [
+          'CREATED', 'PAYMENT_PENDING', 'SUCCESS', 'FAILED', 'CANCELLED',
+          'EXPIRED', 'REFUND_PENDING', 'REFUNDED', 'UNDER_REVIEW'
+        ] &&
+        (!('paymentId' in data) || (data.paymentId is string && data.paymentId.size() <= 128)) &&
+        (!('txnId' in data) || (data.txnId is string && data.txnId.size() <= 128)) &&
+        (!('territoryRequested' in data) || (data.territoryRequested is string && data.territoryRequested.size() <= 160)) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidLegacyApplication(data, appId) {
+      return data.keys().hasAll(['id', 'planId', 'status', 'createdAt', 'applicant']) &&
+        data.id is string && data.id == appId && isValidId(data.id) &&
+        data.planId is string && data.planId.size() >= 3 && data.planId.size() <= 64 &&
+        data.status in [
+          'draft', 'PAYMENT_PENDING', 'submitted', 'under_review', 'documents_required',
+          'due_diligence', 'compliance_review', 'approved', 'rejected',
+          'agreement_pending', 'contract_issued', 'deposit_paid', 'onboarding',
+          'onboarded', 'automated_verified', 'revision_requested', 'declined'
+        ] &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.applicant is map &&
+        data.applicant.fullName is string && data.applicant.fullName.size() >= 2 && data.applicant.fullName.size() <= 120 &&
+        data.applicant.email is string && data.applicant.email.size() >= 5 && data.applicant.email.size() <= 160 &&
+        data.applicant.phone is string && data.applicant.phone.size() >= 7 && data.applicant.phone.size() <= 32 &&
+        (!('userId' in data) || (data.userId is string && data.userId.size() <= 128));
+    }
+
+    function isValidFranchisePayment(data, paymentId) {
+      return data.keys().hasAll([
+          'paymentId', 'applicationId', 'userId', 'txnId',
+          'amount', 'currency', 'paymentStatus', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'paymentId', 'applicationId', 'userId', 'txnId', 'payuTransactionId',
+          'amount', 'currency', 'paymentStatus', 'paymentMethod',
+          'gatewayResponse', 'receiptNumber', 'verifiedAt', 'createdAt', 'updatedAt'
+        ]) &&
+        data.paymentId is string && data.paymentId == paymentId && isValidId(data.paymentId) &&
+        data.applicationId is string && isValidId(data.applicationId) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.txnId is string && data.txnId.size() >= 6 && data.txnId.size() <= 128 &&
+        (!('payuTransactionId' in data) || (data.payuTransactionId is string && data.payuTransactionId.size() <= 128)) &&
+        data.amount is number && data.amount > 0 && data.amount <= 10000000 &&
+        data.currency == 'INR' &&
+        data.paymentStatus in [
+          'CREATED', 'PAYMENT_PENDING', 'SUCCESS', 'FAILED', 'CANCELLED',
+          'EXPIRED', 'REFUND_PENDING', 'REFUNDED', 'UNDER_REVIEW'
+        ] &&
+        (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 64)) &&
+        (!('gatewayResponse' in data) || data.gatewayResponse is map) &&
+        (!('receiptNumber' in data) || (data.receiptNumber is string && data.receiptNumber.size() <= 64)) &&
+        (!('verifiedAt' in data) || (data.verifiedAt is string && data.verifiedAt.size() <= 64)) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidFranchisePlan(data, planId) {
+      return data.keys().hasAll(['id', 'title', 'priceINR', 'currency', 'active', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'title', 'subtitle', 'priceINR', 'currency', 'active', 'activationTimeline', 'refundEligibility', 'updatedAt']) &&
+        data.id is string && data.id == planId && isValidId(data.id) &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 120 &&
+        (!('subtitle' in data) || (data.subtitle is string && data.subtitle.size() <= 200)) &&
+        data.priceINR is number && data.priceINR >= 100 && data.priceINR <= 10000000 &&
+        data.currency == 'INR' &&
+        data.active is bool &&
+        (!('activationTimeline' in data) || (data.activationTimeline is string && data.activationTimeline.size() <= 200)) &&
+        (!('refundEligibility' in data) || (data.refundEligibility is string && data.refundEligibility.size() <= 400)) &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidWebhookEvent(data, eventId) {
+      return data.keys().hasAll(['eventId', 'txnId', 'status', 'source', 'receivedAt']) &&
+        data.keys().hasOnly(['eventId', 'txnId', 'applicationId', 'payuTransactionId', 'amount', 'status', 'source', 'receivedAt']) &&
+        data.eventId is string && data.eventId == eventId && isValidId(data.eventId) &&
+        data.txnId is string && data.txnId.size() >= 4 && data.txnId.size() <= 128 &&
+        (!('applicationId' in data) || (data.applicationId is string && data.applicationId.size() <= 64)) &&
+        (!('payuTransactionId' in data) || (data.payuTransactionId is string && data.payuTransactionId.size() <= 128)) &&
+        (!('amount' in data) || (data.amount is number && data.amount >= 0)) &&
+        data.status is string && data.status.size() >= 2 && data.status.size() <= 64 &&
+        data.source in ['webhook', 'callback', 'verify_api'] &&
+        data.receivedAt is string && data.receivedAt.size() <= 64;
+    }
+
+    function isValidFranchiseDocument(data, docId) {
+      return data.keys().hasAll([
+          'docId', 'applicationId', 'userId', 'docType',
+          'fileName', 'mimeType', 'sizeBytes', 'storagePath', 'status', 'uploadedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'docId', 'applicationId', 'userId', 'docType',
+          'fileName', 'mimeType', 'sizeBytes', 'storagePath', 'status',
+          'auditNotes', 'uploadedAt'
+        ]) &&
+        data.docId is string && data.docId == docId && isValidId(data.docId) &&
+        data.applicationId is string && isValidId(data.applicationId) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.docType in ['gov_id', 'proof_of_funds', 'tax_returns', 'business_plan', 'fdd_signed', 'corporate_charter'] &&
+        data.fileName is string && data.fileName.size() >= 3 && data.fileName.size() <= 200 &&
+        data.mimeType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] &&
+        data.sizeBytes is number && data.sizeBytes >= 100 && data.sizeBytes <= 10485760 &&
+        data.storagePath is string && data.storagePath.size() >= 5 && data.storagePath.size() <= 300 &&
+        data.status in ['pending_audit', 'verified', 'rejected', 'resubmission_required'] &&
+        (!('auditNotes' in data) || (data.auditNotes is string && data.auditNotes.size() <= 500)) &&
+        data.uploadedAt is string && data.uploadedAt.size() <= 64;
+    }
+
+    function isValidAuditLog(data, auditId) {
+      return data.keys().hasAll(['id', 'timestamp', 'action', 'details']) &&
+        data.keys().hasOnly(['id', 'timestamp', 'action', 'resourceId', 'details', 'userRole', 'userEmail', 'checksum', '_syncedAt']) &&
+        data.id is string && data.id == auditId && isValidId(data.id) &&
+        data.timestamp is string && data.timestamp.size() <= 64 &&
+        data.action is string && data.action.size() >= 2 && data.action.size() <= 100 &&
+        data.details is string && data.details.size() >= 2 && data.details.size() <= 1000 &&
+        (!('resourceId' in data) || (data.resourceId is string && data.resourceId.size() <= 128)) &&
+        (!('userRole' in data) || (data.userRole is string && data.userRole.size() <= 64)) &&
+        (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 160)) &&
+        (!('checksum' in data) || (data.checksum is string && data.checksum.size() <= 128)) &&
+        (!('_syncedAt' in data) || (data._syncedAt is string && data._syncedAt.size() <= 64));
+    }
+
+    function isValidAdminRecord(data, adminUid) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'active']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'active']) &&
+        data.uid is string && data.uid == adminUid && data.uid.size() <= 128 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.role in ['super_admin', 'franchise_manager', 'reviewer', 'support_staff', 'director'] &&
+        data.active is bool;
+    }
+
+    // ------------------------------------------------------------------
+    // 1. Standardized PayU-Linked Franchise Applications
+    // ------------------------------------------------------------------
+    match /franchise_applications/{applicationId} {
+      allow get: if isValidId(applicationId) && (
+        isAdmin() || isOwnerUid(existing().userId) || isOwnerEmail(existing().email)
+      );
+
+      allow list: if isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && existing().userId == request.auth.uid);
+
+      // Applicants can create ONLY their own application in initial unpaid status
+      allow create: if isValidId(applicationId) &&
+        isVerifiedUser() &&
+        isValidFranchiseApplication(incoming(), applicationId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().email.lower() == request.auth.token.email.lower() &&
+        incoming().applicationStatus in ['draft', 'PAYMENT_PENDING', 'submitted'] &&
+        incoming().paymentStatus in ['CREATED', 'PAYMENT_PENDING'];
+
+      // Applicants CANNOT alter paymentStatus, amount, txnId, or approval state;
+      // Terminal application states are locked unless modified by an authorized Admin.
+      allow update: if isValidId(applicationId) &&
+        isValidFranchiseApplication(incoming(), applicationId) &&
+        incoming().applicationId == existing().applicationId &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt && (
+          isAdmin() || (
+            isOwnerUid(existing().userId) &&
+            !(existing().applicationStatus in ['approved', 'rejected', 'onboarded']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['phone', 'territoryRequested', 'updatedAt']) &&
+            incoming().paymentStatus == existing().paymentStatus &&
+            incoming().amount == existing().amount &&
+            incoming().applicationStatus == existing().applicationStatus
+          )
+        );
+
       allow delete: if false;
     }
 
-    // 2. Audit Trail Logs - Immutable & restricted to administrators
-    match /audit_logs/{auditId} {
-      allow read: if isAuthorizedAdmin();
-      allow create: if isAuthorizedAdmin() || isAuthenticated();
+    // ------------------------------------------------------------------
+    // 2. Preserved Legacy Applications Collection (Backward Compatible)
+    // ------------------------------------------------------------------
+    match /applications/{applicationId} {
+      allow get: if isValidId(applicationId) && (
+        isAdmin() ||
+        (('userId' in existing()) && isOwnerUid(existing().userId)) ||
+        isOwnerEmail(existing().applicant.email)
+      );
+
+      allow list: if isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && (('userId' in existing()) && existing().userId == request.auth.uid));
+
+      // Authenticated verified applicants may submit their own application;
+      // Status must be initial (never pre-approved).
+      allow create: if isValidId(applicationId) &&
+        isVerifiedUser() &&
+        isValidLegacyApplication(incoming(), applicationId) &&
+        incoming().status in ['draft', 'PAYMENT_PENDING', 'submitted'] &&
+        incoming().applicant.email.lower() == request.auth.token.email.lower() &&
+        (!('userId' in incoming()) || incoming().userId == request.auth.uid);
+
+      allow update: if isValidId(applicationId) &&
+        isValidLegacyApplication(incoming(), applicationId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        isAdmin();
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 3. Franchise Payments (Strict Server / Admin Write-Only)
+    // ------------------------------------------------------------------
+    match /franchise_payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (
+        isAdmin() || isOwnerUid(existing().userId)
+      );
+
+      allow list: if isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && existing().userId == request.auth.uid);
+
+      // Applicants can NEVER create or modify payment verification records
+      allow create: if isValidId(paymentId) &&
+        isAdmin() &&
+        isValidFranchisePayment(incoming(), paymentId);
+
+      // Prevent downgrading SUCCESS back to FAILED/CANCELLED even on admin edits
+      allow update: if isValidId(paymentId) &&
+        isAdmin() &&
+        isValidFranchisePayment(incoming(), paymentId) &&
+        incoming().paymentId == existing().paymentId &&
+        incoming().applicationId == existing().applicationId &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (existing().paymentStatus != 'SUCCESS' || incoming().paymentStatus in ['SUCCESS', 'REFUND_PENDING', 'REFUNDED']);
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Authoritative Franchise Plans (Public Read, Admin Write Only)
+    // ------------------------------------------------------------------
+    match /franchise_plans/{planId} {
+      allow get: if isValidId(planId);
+      allow list: if true;
+
+      allow create: if isValidId(planId) &&
+        isAdmin() &&
+        isValidFranchisePlan(incoming(), planId);
+
+      allow update: if isValidId(planId) &&
+        isAdmin() &&
+        isValidFranchisePlan(incoming(), planId) &&
+        incoming().id == existing().id;
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 5. PayU Webhook Events (Admin-Only Immutable Ledger)
+    // ------------------------------------------------------------------
+    match /payment_webhook_events/{eventId} {
+      allow get: if isValidId(eventId) && isAdmin();
+      allow list: if isVerifiedBootstrapAdmin();
+
+      allow create: if isValidId(eventId) &&
+        isAdmin() &&
+        isValidWebhookEvent(incoming(), eventId);
+
       allow update, delete: if false;
     }
 
-    // 3. User Profiles - Isolated to profile owner or administrator
-    match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAuthorizedAdmin());
-      allow write: if isAuthenticated() && (request.auth.uid == userId || isAuthorizedAdmin());
+    // ------------------------------------------------------------------
+    // 6. Private Franchise Documents Metadata
+    // ------------------------------------------------------------------
+    match /franchise_documents/{docId} {
+      allow get: if isValidId(docId) && (
+        isAdmin() || isOwnerUid(existing().userId)
+      );
+
+      allow list: if isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && existing().userId == request.auth.uid);
+
+      allow create: if isValidId(docId) &&
+        isVerifiedUser() &&
+        isValidFranchiseDocument(incoming(), docId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().status == 'pending_audit';
+
+      allow update: if isValidId(docId) &&
+        isAdmin() &&
+        isValidFranchiseDocument(incoming(), docId) &&
+        incoming().docId == existing().docId &&
+        incoming().applicationId == existing().applicationId &&
+        incoming().userId == existing().userId &&
+        incoming().uploadedAt == existing().uploadedAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'auditNotes']);
+
+      allow delete: if false;
     }
 
-    // 4. Connection Probe Doc
+    // ------------------------------------------------------------------
+    // 7. Immutable Audit Logs (New & Legacy Collections)
+    // ------------------------------------------------------------------
+    match /admin_audit_logs/{auditId} {
+      allow get: if isValidId(auditId) && isAdmin();
+      allow list: if isVerifiedBootstrapAdmin();
+      allow create: if isValidId(auditId) && isAdmin() && isValidAuditLog(incoming(), auditId);
+      allow update, delete: if false;
+    }
+
+    match /audit_logs/{auditId} {
+      allow get: if isValidId(auditId) && isAdmin();
+      allow list: if isVerifiedBootstrapAdmin();
+      allow create: if isValidId(auditId) && isAdmin() && isValidAuditLog(incoming(), auditId);
+      allow update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 8. Isolated User Profiles (PII Protected, No Self-Role Elevation)
+    // ------------------------------------------------------------------
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwnerUid(userId) || isAdmin());
+      allow list: if isVerifiedBootstrapAdmin();
+
+      allow create: if isValidId(userId) &&
+        isOwnerUid(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().email.lower() == request.auth.token.email.lower();
+
+      allow update: if isValidId(userId) &&
+        (isOwnerUid(userId) || isAdmin()) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().uid == existing().uid &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'lastLoginAt']);
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 9. Trusted Administrators Directory
+    // ------------------------------------------------------------------
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isAdmin() || isOwnerUid(adminUid));
+      allow list: if isVerifiedBootstrapAdmin();
+      allow create: if isValidId(adminUid) && isVerifiedBootstrapAdmin() && isValidAdminRecord(incoming(), adminUid);
+      allow update: if isValidId(adminUid) && isVerifiedBootstrapAdmin() && isValidAdminRecord(incoming(), adminUid) && incoming().uid == existing().uid;
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 10. Startup Connectivity Probe Document
+    // ------------------------------------------------------------------
     match /test/{docId} {
-      allow read: if true;
-      allow write: if isAuthorizedAdmin();
+      allow get: if docId == 'connection';
+      allow list: if false;
+      allow write: if false;
     }
   }
 }

@@ -131,8 +131,8 @@ assert(
   'PAYMENTS'
 );
 assert(
-  paymentSource.includes('Online Payment Gateway Verification in Progress') && paymentSource.includes('Razorpay'),
-  'Razorpay online checkout transparently disabled pending merchant verification',
+  paymentSource.includes('PayU Hosted Checkout') && paymentSource.includes('/api/payments/payu/initiate'),
+  'PayU Hosted Checkout initiates orders strictly through server-side /api/payments/payu/initiate',
   'PAYMENTS'
 );
 
@@ -235,8 +235,9 @@ assert(
   'RAZORPAY_COMPLIANCE'
 );
 assert(
-  wizardSource.includes('consentNoGuarantee') && wizardSource.includes("status: 'submitted'"),
-  'ApplicationWizard requires no-income-guarantee consent and sets manual-review submitted status',
+  wizardSource.includes('consentNoGuarantee') &&
+    (wizardSource.includes("status: 'submitted'") || wizardSource.includes("'PAYMENT_PENDING'")),
+  'ApplicationWizard requires no-income-guarantee consent and sets manual-review or PAYMENT_PENDING status',
   'RAZORPAY_COMPLIANCE'
 );
 assert(

@@ -13,7 +13,8 @@ import {
   ExternalLink,
   PenTool,
   Printer,
-  Sparkles
+  Sparkles,
+  RefreshCw
 } from 'lucide-react';
 import { FranchiseApplication, DocumentUpload, PaymentRecord, UserRole } from '../../types/franchise';
 import { FRANCHISE_PLANS, getPlanById, FranchiseStorageService } from '../../services/storage';
@@ -24,13 +25,15 @@ import { DocumentViewerModal } from '../common/DocumentViewerModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
 import { User as FirebaseUser } from 'firebase/auth';
-import { isUserAdmin } from '../../services/firebase';
+import { isUserAdmin, getFirebaseIdToken } from '../../services/firebase';
 
 interface ApplicantStatusTrackerProps {
   applicationId: string;
   onRefresh: () => void;
   onSelectApplication: (id: string) => void;
   currentUser?: FirebaseUser | null;
+  onSignInGoogle?: () => void;
+  onNavigate?: (tab: string) => void;
   userRole?: UserRole;
 }
 
@@ -39,6 +42,8 @@ export function ApplicantStatusTracker({
   onRefresh,
   onSelectApplication,
   currentUser,
+  onSignInGoogle,
+  onNavigate,
   userRole = 'applicant'
 }: ApplicantStatusTrackerProps) {
   const applications = FranchiseStorageService.getApplications();
@@ -49,6 +54,7 @@ export function ApplicantStatusTracker({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
+  const [reconcilingTxnId, setReconcilingTxnId] = useState<string | null>(null);
   
   // Verification Gate States
   const [unlockEmailOrPhone, setUnlockEmailOrPhone] = useState('');
@@ -95,6 +101,7 @@ export function ApplicantStatusTracker({
   const getStageIndex = (status: FranchiseApplication['status']) => {
     switch (status) {
       case 'draft': return -1;
+      case 'PAYMENT_PENDING':
       case 'submitted': return 0;
       case 'automated_verified': return 1;
       case 'compliance_review': return 2;
@@ -103,6 +110,67 @@ export function ApplicantStatusTracker({
       case 'deposit_paid': return 5;
       case 'onboarded': return 6;
       default: return 1;
+    }
+  };
+
+  const hasVerifiedSuccessPayment =
+    currentApp.paymentStatus === 'SUCCESS' ||
+    currentApp.payments.some((p) => p.payuStatus === 'SUCCESS' || p.status === 'completed');
+
+  const handleVerifyPayUTxn = async (txnId: string) => {
+    if (!currentUser) {
+      NotificationService.addNotification(
+        'Sign-In Required',
+        'Please sign in with Google to run live PayU transaction verification.',
+        'warning'
+      );
+      return;
+    }
+    setReconcilingTxnId(txnId);
+    try {
+      const idToken = await getFirebaseIdToken();
+      if (!idToken) return;
+      const res = await fetch('/api/payments/payu/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ txnid: txnId })
+      });
+      const data = await res.json();
+      if (data?.payment) {
+        const mappedStatus: PaymentRecord['status'] =
+          data.payment.paymentStatus === 'SUCCESS'
+            ? 'completed'
+            : data.payment.paymentStatus === 'FAILED' || data.payment.paymentStatus === 'CANCELLED'
+            ? 'failed'
+            : 'processing';
+        FranchiseStorageService.updatePaymentStatus(
+          currentApp.id,
+          data.payment.paymentId || currentApp.payments.find((p) => p.txnId === txnId)?.id || txnId,
+          mappedStatus,
+          currentUser.email || 'applicant'
+        );
+        NotificationService.addNotification(
+          `PayU Status: ${data.payment.paymentStatus}`,
+          data.message || `Verified transaction ${txnId} with PayU.`,
+          data.payment.paymentStatus === 'SUCCESS' ? 'success' : 'info',
+          currentApp.id
+        );
+        onRefresh();
+      } else {
+        NotificationService.addNotification(
+          'PayU Verification Notice',
+          data?.message || 'Could not confirm transaction status yet.',
+          'warning',
+          currentApp.id
+        );
+      }
+    } catch {
+      NotificationService.addNotification('Verification Error', 'Unable to reach PayU verification service.', 'error');
+    } finally {
+      setReconcilingTxnId(null);
     }
   };
 
@@ -753,52 +821,120 @@ export function ApplicantStatusTracker({
       {/* TAB CONTENT: Payments */}
       {activeTab === 'payments' && (
         <div className="p-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Payment History & Escrow Deposits
+                PayU Payment History &amp; Escrow Deposits
               </h3>
               <p className="text-xs text-slate-500">
-                Verified financial transactions recorded to the tamper-evident audit ledger.
+                Official receipts are issued strictly after server-side PayU verification or corporate bank reconciliation.
               </p>
             </div>
-            {!currentApp.payments.some(p => p.type === 'franchise_deposit') && (
+            {!hasVerifiedSuccessPayment && (
               <button
                 type="button"
                 onClick={() => setShowPaymentModal(true)}
-                className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5"
+                className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
               >
                 <CreditCard className="w-3.5 h-3.5" />
-                <span>Pay Franchise License Deposit</span>
+                <span>
+                  {currentApp.payments.some((p) => p.status === 'failed' || p.payuStatus === 'FAILED' || p.payuStatus === 'CANCELLED')
+                    ? 'Retry Payment via PayU'
+                    : 'Pay via PayU Hosted Checkout'}
+                </span>
               </button>
             )}
           </div>
 
-          <div className="space-y-3">
-            {currentApp.payments.map(pay => (
-              <div
-                key={pay.id}
-                className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex items-center justify-between text-xs"
+          {currentApp.payments.length === 0 ? (
+            <div className="p-6 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-2 text-xs text-slate-500">
+              <p>No payments have been initiated for application <span className="font-mono font-bold">{currentApp.id}</span> yet.</p>
+              <button
+                type="button"
+                onClick={() => setShowPaymentModal(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold cursor-pointer"
               >
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    <span className="capitalize">{pay.type.replace('_', ' ')}</span>
-                    <span className="text-[10px] text-emerald-600 font-mono">CONFIRMED</span>
-                  </div>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    Receipt: {pay.receiptNumber} · Ref: {pay.referenceCode} · {new Date(pay.timestamp).toLocaleDateString()}
-                  </span>
-                </div>
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>Proceed to PayU Payment (₹{plan.priceINR.toLocaleString('en-IN')} INR)</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {currentApp.payments.map(pay => {
+                const isVerifiedSuccess = pay.payuStatus === 'SUCCESS' || pay.status === 'completed';
+                const isFailedState =
+                  pay.status === 'failed' ||
+                  pay.payuStatus === 'FAILED' ||
+                  pay.payuStatus === 'CANCELLED' ||
+                  pay.payuStatus === 'EXPIRED';
+                const statusLabel = pay.payuStatus || (pay.status === 'completed' ? 'SUCCESS' : pay.status === 'failed' ? 'FAILED' : 'PAYMENT_PENDING');
+                const sym = pay.currency === 'USD' ? '$' : '₹';
 
-                <div className="text-right">
-                  <span className="text-base font-bold font-mono text-slate-900 dark:text-slate-100 block">
-                    ${pay.amount.toLocaleString()} USD
-                  </span>
-                  <span className="text-[11px] text-slate-400 capitalize">{pay.method.replace('_', ' ')}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+                return (
+                  <div
+                    key={pay.id}
+                    className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
+                        <span className="capitalize">{pay.type.replace('_', ' ')}</span>
+                        <span
+                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                            isVerifiedSuccess
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : isFailedState
+                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                          }`}
+                        >
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono block">
+                        {isVerifiedSuccess ? `Receipt: ${pay.receiptNumber} · ` : ''}
+                        Ref/Txn: {pay.txnId || pay.referenceCode}
+                        {pay.payuTransactionId ? ` · PayU ID: ${pay.payuTransactionId}` : ''} ·{' '}
+                        {new Date(pay.timestamp).toLocaleDateString('en-IN')}
+                      </span>
+                    </div>
+
+                    <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2">
+                      <div className="text-right">
+                        <span className="text-base font-bold font-mono text-slate-900 dark:text-slate-100 block">
+                          {sym}{pay.amount.toLocaleString('en-IN')} {pay.currency}
+                        </span>
+                        <span className="text-[11px] text-slate-400 capitalize">{pay.method.replace(/_/g, ' ')}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {isVerifiedSuccess && (
+                          <button
+                            type="button"
+                            onClick={() => window.print()}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Printer className="w-3 h-3" />
+                            <span>Receipt</span>
+                          </button>
+                        )}
+                        {!isVerifiedSuccess && pay.method === 'payu_hosted' && pay.txnId && (
+                          <button
+                            type="button"
+                            disabled={reconcilingTxnId === pay.txnId}
+                            onClick={() => handleVerifyPayUTxn(pay.txnId!)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${reconcilingTxnId === pay.txnId ? 'animate-spin' : ''}`} />
+                            <span>Verify with PayU</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -822,6 +958,9 @@ export function ApplicantStatusTracker({
           paymentType="franchise_deposit"
           amount={depositAmount}
           currency={appCurrency}
+          currentUser={currentUser}
+          onSignInGoogle={onSignInGoogle}
+          onNavigate={onNavigate}
           onPaymentSuccess={() => {
             setShowPaymentModal(false);
             onRefresh();

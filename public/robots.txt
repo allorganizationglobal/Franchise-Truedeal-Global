@@ -21,13 +21,15 @@ Allow: /#apply
 Allow: /#tracker
 Allow: /#faq
 Allow: /#calculator
-Allow: /#api
 
-# Disallow internal administrative and private executive dashboards
+# Disallow internal administrative, API documentation, and private payment return routes
 Disallow: /admin
 Disallow: /analytics
+Disallow: /api-docs
+Disallow: /payment-result
 Disallow: /#admin
 Disallow: /#analytics
+Disallow: /#api
 Disallow: /api/private/
 
 # Canonical Sitemap Reference

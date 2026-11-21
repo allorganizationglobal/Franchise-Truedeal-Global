@@ -2,68 +2,247 @@
   "entities": {
     "FranchiseApplication": {
       "title": "FranchiseApplication",
-      "description": "Franchise partner application submission with applicant details, plan, financials, documents and status.",
+      "description": "Franchise partner application record linked to applicant identity, selected plan, KYC metadata, and authoritative payment status.",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" },
-        "planId": { "type": "string" },
+        "id": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "applicationId": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "applicantName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 160 },
+        "phone": { "type": "string", "minLength": 7, "maxLength": 32 },
+        "franchisePlanId": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "franchisePlanName": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "planId": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "amount": { "type": "number" },
         "currency": { "type": "string", "enum": ["INR", "USD"] },
+        "applicationStatus": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "PAYMENT_PENDING",
+            "submitted",
+            "under_review",
+            "documents_required",
+            "due_diligence",
+            "compliance_review",
+            "approved",
+            "rejected",
+            "agreement_pending",
+            "contract_issued",
+            "deposit_paid",
+            "onboarding",
+            "onboarded",
+            "automated_verified",
+            "revision_requested",
+            "declined"
+          ]
+        },
         "status": {
           "type": "string",
-          "enum": ["draft", "submitted", "under_review", "compliance_pending", "approved", "rejected", "agreement_issued", "activated"]
+          "enum": [
+            "draft",
+            "PAYMENT_PENDING",
+            "submitted",
+            "under_review",
+            "documents_required",
+            "due_diligence",
+            "compliance_review",
+            "approved",
+            "rejected",
+            "agreement_pending",
+            "contract_issued",
+            "deposit_paid",
+            "onboarding",
+            "onboarded",
+            "automated_verified",
+            "revision_requested",
+            "declined"
+          ]
         },
-        "applicant": {
-          "type": "object",
-          "properties": {
-            "fullName": { "type": "string" },
-            "email": { "type": "string" },
-            "phone": { "type": "string" },
-            "companyName": { "type": "string" },
-            "country": { "type": "string" },
-            "stateProvince": { "type": "string" },
-            "city": { "type": "string" },
-            "postalCode": { "type": "string" },
-            "entityType": { "type": "string" }
-          },
-          "required": ["fullName", "email", "phone", "country", "city"]
+        "paymentStatus": {
+          "type": "string",
+          "enum": [
+            "CREATED",
+            "PAYMENT_PENDING",
+            "SUCCESS",
+            "FAILED",
+            "CANCELLED",
+            "EXPIRED",
+            "REFUND_PENDING",
+            "REFUNDED",
+            "UNDER_REVIEW"
+          ]
         },
-        "financials": {
-          "type": "object",
-          "properties": {
-            "liquidCapital": { "type": "number" },
-            "netWorth": { "type": "number" },
-            "creditScoreTier": { "type": "string" },
-            "fundingSource": { "type": "string" }
-          }
-        }
+        "paymentId": { "type": "string", "maxLength": 128 },
+        "txnId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
       },
-      "required": ["id", "createdAt", "planId", "status", "applicant"]
+      "required": ["id", "userId", "planId", "status", "createdAt"]
     },
-    "AuditLog": {
-      "title": "AuditLog",
-      "description": "Immutable security and audit trail log entry for franchise actions.",
+    "FranchisePayment": {
+      "title": "FranchisePayment",
+      "description": "Server-verified PayU Hosted Checkout payment record. Never stores raw card, CVV, or OTP data.",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "timestamp": { "type": "string" },
-        "action": { "type": "string" },
-        "targetId": { "type": "string" },
-        "details": { "type": "string" },
-        "actorRole": { "type": "string" }
+        "paymentId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "applicationId": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "txnId": { "type": "string", "minLength": 6, "maxLength": 128 },
+        "payuTransactionId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "currency": { "type": "string", "enum": ["INR"] },
+        "paymentStatus": {
+          "type": "string",
+          "enum": [
+            "CREATED",
+            "PAYMENT_PENDING",
+            "SUCCESS",
+            "FAILED",
+            "CANCELLED",
+            "EXPIRED",
+            "REFUND_PENDING",
+            "REFUNDED",
+            "UNDER_REVIEW"
+          ]
+        },
+        "paymentMethod": { "type": "string", "maxLength": 64 },
+        "receiptNumber": { "type": "string", "maxLength": 64 },
+        "verifiedAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["paymentId", "applicationId", "userId", "txnId", "amount", "currency", "paymentStatus", "createdAt"]
+    },
+    "FranchisePlan": {
+      "title": "FranchisePlan",
+      "description": "Authoritative franchise package pricing and terms managed exclusively by authorized administrators.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "priceINR": { "type": "number" },
+        "currency": { "type": "string", "enum": ["INR"] },
+        "active": { "type": "boolean" },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "priceINR", "currency", "active"]
+    },
+    "PaymentWebhookEvent": {
+      "title": "PaymentWebhookEvent",
+      "description": "Idempotent PayU webhook and verification event ledger restricted exclusively to administrators.",
+      "type": "object",
+      "properties": {
+        "eventId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "txnId": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "applicationId": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 64 },
+        "source": { "type": "string", "enum": ["webhook", "callback", "verify_api"] },
+        "receivedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["eventId", "txnId", "status", "source", "receivedAt"]
+    },
+    "FranchiseDocument": {
+      "title": "FranchiseDocument",
+      "description": "Private KYC and franchise document metadata pointing to Firebase Storage paths.",
+      "type": "object",
+      "properties": {
+        "docId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "applicationId": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "docType": { "type": "string", "enum": ["gov_id", "proof_of_funds", "tax_returns", "business_plan", "fdd_signed", "corporate_charter"] },
+        "fileName": { "type": "string", "minLength": 3, "maxLength": 200 },
+        "mimeType": { "type": "string", "enum": ["application/pdf", "image/jpeg", "image/png", "image/webp"] },
+        "sizeBytes": { "type": "number" },
+        "storagePath": { "type": "string", "minLength": 5, "maxLength": 300 },
+        "status": { "type": "string", "enum": ["pending_audit", "verified", "rejected", "resubmission_required"] },
+        "uploadedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["docId", "applicationId", "userId", "docType", "fileName", "mimeType", "sizeBytes", "storagePath", "status", "uploadedAt"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Immutable security and governance audit trail entry.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "action": { "type": "string", "minLength": 2, "maxLength": 100 },
+        "resourceId": { "type": "string", "maxLength": 128 },
+        "details": { "type": "string", "minLength": 2, "maxLength": 1000 },
+        "userEmail": { "type": "string", "maxLength": 160 },
+        "userRole": { "type": "string", "maxLength": 64 },
+        "checksum": { "type": "string", "maxLength": 128 }
       },
       "required": ["id", "timestamp", "action", "details"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user account profile isolated to owner or admin (no self-assigned RBAC role).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 160 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "lastLoginAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["uid", "displayName", "email", "lastLoginAt"]
+    },
+    "AdminRoleRecord": {
+      "title": "AdminRoleRecord",
+      "description": "Trusted administrator allowlist document checked by Firestore security rules.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["super_admin", "franchise_manager", "reviewer", "support_staff", "director"] },
+        "active": { "type": "boolean" }
+      },
+      "required": ["uid", "email", "role", "active"]
     }
   },
   "firestore": {
     "/applications/{applicationId}": {
       "schema": "FranchiseApplication",
-      "description": "Collection of all submitted franchise applications"
+      "description": "Preserved legacy franchise applications collection isolated by userId/email ownership and admin access"
+    },
+    "/franchise_applications/{applicationId}": {
+      "schema": "FranchiseApplication",
+      "description": "Standardized PayU-integrated franchise applications collection"
+    },
+    "/franchise_payments/{paymentId}": {
+      "schema": "FranchisePayment",
+      "description": "Verified franchise payment transactions; applicants read own records only, never write payment status"
+    },
+    "/franchise_plans/{planId}": {
+      "schema": "FranchisePlan",
+      "description": "Authoritative franchise plan catalog readable publicly and writable strictly by administrators"
+    },
+    "/payment_webhook_events/{eventId}": {
+      "schema": "PaymentWebhookEvent",
+      "description": "Immutable PayU webhook & verification ledger accessible strictly to administrators"
+    },
+    "/franchise_documents/{docId}": {
+      "schema": "FranchiseDocument",
+      "description": "Applicant-owned KYC document metadata pointing to private Firebase Storage objects"
+    },
+    "/admin_audit_logs/{auditId}": {
+      "schema": "AdminAuditLog",
+      "description": "Immutable administrative activity audit trail"
     },
     "/audit_logs/{auditId}": {
-      "schema": "AuditLog",
-      "description": "System audit and security event trail"
+      "schema": "AdminAuditLog",
+      "description": "Preserved legacy immutable security audit log collection"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Isolated authenticated user profiles (PII restricted to owner or admin; role elevation blocked)"
+    },
+    "/admins/{adminUid}": {
+      "schema": "AdminRoleRecord",
+      "description": "Trusted administrator directory managed strictly by Super Admins"
     }
   }
 }

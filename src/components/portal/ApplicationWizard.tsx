@@ -35,6 +35,8 @@ import { evaluateFranchiseApplication, FranchiseStorageService, USD_INR_RATE, US
 import { calculateFeeBreakdownINR, getPlanTransparencyDefaults } from '../../config/complianceConfig';
 import { encryptFilePayload, validateUploadFile } from '../../utils/crypto';
 import { NotificationService } from '../../services/notificationService';
+import { User as FirebaseUser } from 'firebase/auth';
+import { uploadFranchiseDocumentToStorage } from '../../services/firebase';
 import { PaymentModal } from '../common/PaymentModal';
 import { BiometricSetupModal } from '../common/BiometricSetupModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
@@ -44,6 +46,8 @@ interface ApplicationWizardProps {
   initialPlanId?: string;
   currency?: Currency;
   onToggleCurrency?: (c: Currency) => void;
+  currentUser?: FirebaseUser | null;
+  onSignInGoogle?: () => void;
   onApplicationCreated: (app: FranchiseApplication) => void;
   onNavigateToTracker: (appId: string) => void;
   onNavigate?: (tab: string) => void;
@@ -53,6 +57,8 @@ export function ApplicationWizard({
   initialPlanId = 'plan_standard',
   currency = 'INR',
   onToggleCurrency,
+  currentUser,
+  onSignInGoogle,
   onApplicationCreated,
   onNavigateToTracker,
   onNavigate
@@ -222,8 +228,26 @@ export function ApplicationWizard({
       const buffer = await file.arrayBuffer();
       const encryptionResult = await encryptFilePayload(buffer, file.name);
 
+      const docId = 'doc_' + Math.random().toString(36).substring(2, 9);
+      let storagePath: string | undefined;
+      let downloadUrl: string | undefined;
+
+      if (currentUser) {
+        const cloudUpload = await uploadFranchiseDocumentToStorage({
+          file,
+          applicationId: 'DRAFT_UPLOAD',
+          documentType: selectedDocType,
+          documentId: docId,
+          cipherChecksum: encryptionResult.cipherChecksum
+        });
+        if (cloudUpload.uploaded) {
+          storagePath = cloudUpload.storagePath;
+          downloadUrl = cloudUpload.downloadUrl;
+        }
+      }
+
       const newDoc: DocumentUpload = {
-        id: 'doc_' + Math.random().toString(36).substring(2, 9),
+        id: docId,
         type: selectedDocType,
         name: (validation.sanitizedName || file.name) + '.enc',
         sizeBytes: file.size,
@@ -234,11 +258,13 @@ export function ApplicationWizard({
         encryptionAlgorithm: 'AES-GCM-256',
         cipherChecksum: encryptionResult.cipherChecksum,
         ivHex: encryptionResult.ivHex,
+        storagePath,
+        downloadUrl
       };
 
       setDocuments(prev => [...prev, newDoc]);
       NotificationService.addNotification(
-        'Document Encrypted & Vaulted',
+        storagePath ? 'Document Encrypted & Stored in Private Cloud Vault' : 'Document Encrypted & Vaulted',
         `File ${file.name} validated & encrypted with AES-GCM-256 (Checksum: ${encryptionResult.cipherChecksum.substring(0, 10)}...)`,
         'success'
       );
@@ -304,6 +330,7 @@ export function ApplicationWizard({
 
     const newApp: FranchiseApplication = {
       id: applicationId,
+      userId: currentUser?.uid,
       createdAt: nowIso,
       updatedAt: nowIso,
       applicant: {
@@ -325,12 +352,14 @@ export function ApplicationWizard({
       },
       planId: selectedPlanId,
       currency: currentCurrency,
+      amount: selectedFeeBreakdown.totalPayableINR,
+      paymentStatus: 'PAYMENT_PENDING',
       territoryRequested: territoryRequested.trim(),
       preferredStartDate,
       operationalExperienceYears,
       businessBackgroundSummary: businessBackgroundSummary.trim(),
-      // Always enters 'submitted' status pending manual compliance review (never auto-approved)
-      status: 'submitted',
+      // Enters PAYMENT_PENDING (awaiting PayU verification or manual bank reconciliation)
+      status: paymentRecord ? 'submitted' : 'PAYMENT_PENDING',
       automatedEvaluation: finalScore,
       documents,
       payments: paymentRecord ? [paymentRecord] : [],
@@ -1125,8 +1154,8 @@ export function ApplicationWizard({
                     <span className="font-bold text-slate-900 dark:text-white">
                       Official Corporate Bank Account ({complianceConfig.legalName})
                     </span>
-                    <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 rounded">
-                      Online Gateway (Razorpay) Pending Verification
+                    <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded">
+                      PayU India Hosted Checkout &amp; Corporate Bank Supported
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1447,11 +1476,21 @@ export function ApplicationWizard({
             </div>
           </div>
 
-          <div className="flex gap-3 justify-center pt-2">
+          <div className="flex flex-wrap gap-3 justify-center pt-2">
+            {submissionResult.paymentStatus !== 'SUCCESS' && (
+              <button
+                type="button"
+                onClick={() => setShowPaymentModal(true)}
+                className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>Proceed to PayU Hosted Checkout (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onNavigateToTracker(submissionResult.id)}
-              className="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-2"
+              className="py-2.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
             >
               <span>Go to Real-Time Application Tracker</span>
               <ArrowRight className="w-3.5 h-3.5" />
@@ -1460,31 +1499,38 @@ export function ApplicationWizard({
         </div>
       )}
 
-      {/* Embedded Payment Modal for Application Fee */}
+      {/* Embedded Payment Modal for PayU Hosted Checkout or Corporate Bank Reference */}
       {showPaymentModal && (
         <PaymentModal
           isOpen={showPaymentModal}
           onClose={() => setShowPaymentModal(false)}
-          application={{
-            id: 'PENDING',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            applicant: { fullName, email, phone, companyName, country, stateProvince, city, postalCode, entityType },
-            financials: { liquidCapital, netWorth, creditScoreTier, fundingSource },
-            planId: selectedPlanId,
-            territoryRequested,
-            preferredStartDate,
-            operationalExperienceYears,
-            businessBackgroundSummary,
-            status: 'draft',
-            automatedEvaluation: previewScore,
-            documents: [],
-            payments: [],
-            reviewNotes: []
-          }}
+          application={
+            submissionResult || {
+              id: 'PENDING',
+              userId: currentUser?.uid,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              applicant: { fullName, email, phone, companyName, country, stateProvince, city, postalCode, entityType },
+              financials: { liquidCapital, netWorth, creditScoreTier, fundingSource },
+              planId: selectedPlanId,
+              amount: selectedFeeBreakdown.totalPayableINR,
+              paymentStatus: 'PAYMENT_PENDING',
+              territoryRequested,
+              preferredStartDate,
+              operationalExperienceYears,
+              businessBackgroundSummary,
+              status: 'draft',
+              automatedEvaluation: previewScore,
+              documents: [],
+              payments: [],
+              reviewNotes: []
+            }
+          }
           paymentType="franchise_deposit"
           amount={selectedPlan.priceINR}
           currency="INR"
+          currentUser={currentUser}
+          onSignInGoogle={onSignInGoogle}
           onNavigate={onNavigate}
           onPaymentSuccess={(rec) => {
             setPaymentCompleted(true);

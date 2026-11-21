@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -10,13 +10,19 @@ import {
   Copy,
   Check,
   Info,
-  AlertTriangle
+  AlertTriangle,
+  CreditCard,
+  ExternalLink,
+  Loader2,
+  LogIn
 } from 'lucide-react';
+import { User as FirebaseUser } from 'firebase/auth';
 import { FranchiseApplication, PaymentRecord, Currency } from '../../types/franchise';
 import { FranchiseStorageService, getPlanById } from '../../services/storage';
 import { calculateFeeBreakdownINR } from '../../config/complianceConfig';
 import { NotificationService } from '../../services/notificationService';
 import { playApprovalSuccessSound } from '../../utils/audio';
+import { getFirebaseIdToken } from '../../services/firebase';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -25,8 +31,17 @@ interface PaymentModalProps {
   paymentType: 'application_fee' | 'franchise_deposit';
   amount: number;
   currency?: Currency;
+  currentUser?: FirebaseUser | null;
+  onSignInGoogle?: () => void;
   onPaymentSuccess?: (payment: PaymentRecord) => void;
   onNavigate?: (tab: string) => void;
+}
+
+interface PayUStatusConfig {
+  configured: boolean;
+  env: 'test' | 'production';
+  checkoutUrl: string;
+  missingEnvVars?: string[];
 }
 
 export function PaymentModal({
@@ -36,6 +51,8 @@ export function PaymentModal({
   paymentType,
   amount,
   currency = 'INR',
+  currentUser,
+  onSignInGoogle,
   onPaymentSuccess,
   onNavigate
 }: PaymentModalProps) {
@@ -43,8 +60,13 @@ export function PaymentModal({
   const plan = getPlanById(application.planId);
   const feeBreakdown = calculateFeeBreakdownINR(amount, config);
 
-  // Two clear modes: Direct Corporate Bank Transfer / UPI Reference OR Online Razorpay Readiness Status (Disabled pending approval)
-  const [activeMode, setActiveMode] = useState<'bank_upi' | 'razorpay_pending'>('bank_upi');
+  const [activeMode, setActiveMode] = useState<'payu_hosted' | 'bank_upi'>('payu_hosted');
+  const [payuConfig, setPayuConfig] = useState<PayUStatusConfig | null>(null);
+  const [loadingPayuConfig, setLoadingPayuConfig] = useState(false);
+  const [initiatingPayu, setInitiatingPayu] = useState(false);
+  const [payuError, setPayuError] = useState<string | null>(null);
+  const [payuPolicyAccepted, setPayuPolicyAccepted] = useState(false);
+
   const [selectedQrTab, setSelectedQrTab] = useState<'bob' | 'idbi'>('bob');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [utrNumber, setUtrNumber] = useState<string>('');
@@ -53,6 +75,33 @@ export function PaymentModal({
   const [formError, setFormError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [submittedPayment, setSubmittedPayment] = useState<PaymentRecord | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let active = true;
+    setLoadingPayuConfig(true);
+    fetch('/api/payments/payu/status?mode=config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && data?.config) {
+          setPayuConfig({
+            configured: Boolean(data.config.configured),
+            env: data.config.env === 'production' ? 'production' : 'test',
+            checkoutUrl: String(data.config.checkoutUrl || 'https://test.payu.in/_payment'),
+            missingEnvVars: Array.isArray(data.config.missingEnvVars) ? data.config.missingEnvVars : []
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setPayuConfig(null);
+      })
+      .finally(() => {
+        if (active) setLoadingPayuConfig(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
 
   const copyToClipboard = (text: string, fieldId: string) => {
     navigator.clipboard?.writeText(text);
@@ -64,6 +113,105 @@ export function PaymentModal({
 
   const currencySymbol = currency === 'INR' ? '₹' : '$';
   const totalPayable = currency === 'INR' ? feeBreakdown.totalPayableINR : amount;
+
+  const handleLaunchPayUCheckout = async () => {
+    setPayuError(null);
+
+    if (!currentUser) {
+      setPayuError('Please sign in with your Google account first so your payment is securely bound to your verified applicant identity.');
+      return;
+    }
+
+    if (!payuPolicyAccepted) {
+      setPayuError('Please confirm that you have reviewed the Refund Policy, Cancellation Policy, and Terms & Conditions before proceeding to PayU Hosted Checkout.');
+      return;
+    }
+
+    if (!application.id || application.id === 'PENDING') {
+      setPayuError('Please submit your application first to obtain an official Application Reference ID before initiating PayU Hosted Checkout.');
+      return;
+    }
+
+    setInitiatingPayu(true);
+    try {
+      const idToken = await getFirebaseIdToken();
+      if (!idToken) {
+        setPayuError('Unable to obtain a valid Firebase authentication token. Please sign out and sign in again.');
+        setInitiatingPayu(false);
+        return;
+      }
+
+      const response = await fetch('/api/payments/payu/initiate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          applicationId: application.id,
+          planId: application.planId,
+          applicantName: application.applicant.fullName,
+          phone: application.applicant.phone
+        })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data?.ok || !data?.checkoutUrl || !data?.formFields) {
+        setPayuError(
+          data?.message ||
+            (response.status === 503
+              ? 'PayU India Hosted Checkout credentials are not yet activated on this server (account currently under verification).'
+              : 'Could not initiate PayU Hosted Checkout. Please try again or contact support.')
+        );
+        setInitiatingPayu(false);
+        return;
+      }
+
+      // Persist initiated PAYMENT_PENDING record locally so tracker reflects it immediately
+      if (data.payment?.txnId) {
+        const pendingRecord: PaymentRecord = {
+          id: data.payment.paymentId || `pay_${data.payment.txnId}`,
+          applicationId: application.id,
+          type: paymentType,
+          amount: data.payment.amount,
+          currency: 'INR',
+          method: 'payu_hosted',
+          status: 'processing',
+          payuStatus: 'PAYMENT_PENDING',
+          txnId: data.payment.txnId,
+          transactionHash: data.payment.txnId,
+          referenceCode: data.payment.txnId,
+          timestamp: data.payment.createdAt || new Date().toISOString(),
+          receiptNumber: 'PENDING-PAYU-VERIFICATION',
+          billingName: application.applicant.fullName,
+          gstAmount: data.payment.gstAmountINR || 0,
+          totalWithGst: data.payment.amount
+        };
+        FranchiseStorageService.addPayment(application.id, pendingRecord);
+      }
+
+      // Dynamically construct and submit official PayU Hosted Checkout POST form
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = data.checkoutUrl;
+      form.style.display = 'none';
+
+      Object.entries(data.formFields as Record<string, string>).forEach(([fieldName, fieldVal]) => {
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = fieldName;
+        input.value = String(fieldVal ?? '');
+        form.appendChild(input);
+      });
+
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err: any) {
+      setPayuError(err?.message || 'Network error while connecting to the payment initiation endpoint.');
+      setInitiatingPayu(false);
+    }
+  };
 
   const handleSubmitReference = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +246,7 @@ export function PaymentModal({
         currency,
         method: 'upi_bank_transfer',
         status: 'processing',
+        payuStatus: 'PAYMENT_PENDING',
         transactionHash:
           'ref_' +
           Array.from(crypto.getRandomValues(new Uint8Array(10)))
@@ -131,7 +280,7 @@ export function PaymentModal({
       playApprovalSuccessSound();
       setSubmittedPayment(newPayment);
       onPaymentSuccess?.(newPayment);
-    }, 600);
+    }, 500);
   };
 
   const handlePolicyJump = (tab: string) => {
@@ -168,36 +317,52 @@ export function PaymentModal({
                   </span>
                 </div>
                 <div className="text-right shrink-0">
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Total Payable ({currency})</span>
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Authoritative Amount (INR)</span>
                   <span className="text-2xl font-black font-mono tabular-nums text-slate-900 dark:text-slate-100">
-                    {currencySymbol}{totalPayable.toLocaleString('en-IN')}
+                    ₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')}
                   </span>
                 </div>
               </div>
 
               {/* Transparent Tax Breakdown */}
-              {currency === 'INR' && (
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Base Franchise Package Fee</span>
-                    <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">
-                      ₹{feeBreakdown.baseFeeINR.toLocaleString('en-IN')}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Tax / GST Treatment</span>
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                      {feeBreakdown.gstAmountINR > 0
-                        ? `₹${feeBreakdown.gstAmountINR.toLocaleString('en-IN')} (${feeBreakdown.gstRatePercent}% GST)`
-                        : feeBreakdown.gstLabel}
-                    </span>
-                  </div>
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Base Franchise Package Fee</span>
+                  <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">
+                    ₹{feeBreakdown.baseFeeINR.toLocaleString('en-IN')}
+                  </span>
                 </div>
-              )}
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Tax / GST Treatment</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">
+                    {feeBreakdown.gstAmountINR > 0
+                      ? `₹${feeBreakdown.gstAmountINR.toLocaleString('en-IN')} (${feeBreakdown.gstRatePercent}% GST)`
+                      : feeBreakdown.gstLabel}
+                  </span>
+                </div>
+                {plan?.validity && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">License Validity</span>
+                    <span className="font-medium text-slate-700 dark:text-slate-300">{plan.validity}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Channel Tabs: Verified Bank/UPI Reference vs Online Gateway (Razorpay Pending) */}
+            {/* Channel Tabs: PayU India Hosted Checkout vs Corporate Bank / UPI */}
             <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setActiveMode('payu_hosted')}
+                className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  activeMode === 'payu_hosted'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                <CreditCard className="w-3.5 h-3.5" />
+                <span>PayU Hosted Checkout</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveMode('bank_upi')}
@@ -210,44 +375,128 @@ export function PaymentModal({
                 <Building2 className="w-3.5 h-3.5" />
                 <span>Corporate Bank / UPI</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveMode('razorpay_pending')}
-                className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  activeMode === 'razorpay_pending'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                }`}
-              >
-                <Lock className="w-3.5 h-3.5" />
-                <span>Online Gateway (Razorpay)</span>
-              </button>
             </div>
 
-            {activeMode === 'razorpay_pending' ? (
-              <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-3 text-xs text-amber-950 dark:text-amber-200">
-                <div className="flex items-center gap-2 font-bold text-sm">
-                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                  <span>Online Payment Gateway Verification in Progress</span>
+            {activeMode === 'payu_hosted' ? (
+              <div className="space-y-4">
+                {/* PayU Security & Environment Banner */}
+                <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>PayU India Official Hosted Checkout</span>
+                    </span>
+                    {loadingPayuConfig ? (
+                      <span className="text-[10px] font-mono text-slate-500">Checking gateway...</span>
+                    ) : payuConfig?.configured ? (
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 uppercase">
+                        {payuConfig.env === 'production' ? 'LIVE READY' : 'TEST SANDBOX READY'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase">
+                        PENDING ACTIVATION
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-indigo-900/90 dark:text-indigo-200/90 leading-relaxed">
+                    You will be redirected to PayU India&apos;s PCI-DSS hosted checkout page for UPI, NetBanking, Debit/Credit
+                    Cards, and Wallets. Amount and SHA-512 cryptographic signature are calculated strictly on our server.
+                    This portal never collects or stores card numbers, CVV, or OTP.
+                  </p>
                 </div>
-                <p className="leading-relaxed">
-                  Online Card, UPI Intent, and NetBanking checkout via <strong>Razorpay</strong> is currently disabled
-                  while {config.legalName} completes merchant verification and KYC onboarding.
-                </p>
-                <p className="leading-relaxed">
-                  For security and PCI-DSS compliance, this portal never collects raw card numbers or CVV codes directly.
-                  Once Razorpay verification is approved, live hosted checkout with server-side HMAC signature
-                  verification will be enabled here.
-                </p>
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setActiveMode('bank_upi')}
-                    className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold text-xs cursor-pointer"
-                  >
-                    Use Verified Corporate Bank Transfer Reference Instead
-                  </button>
-                </div>
+
+                {/* Gateway Pending Activation Honest Notice */}
+                {!loadingPayuConfig && payuConfig && !payuConfig.configured && (
+                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2 text-xs text-amber-950 dark:text-amber-200">
+                    <div className="flex items-center gap-2 font-bold">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>PayU Merchant Account Verification In Progress</span>
+                    </div>
+                    <p className="leading-relaxed">
+                      Server-side PayU Classic Hosted Checkout integration is complete, and merchant credentials
+                      (<code className="font-mono">PAYU_MERCHANT_KEY</code> / <code className="font-mono">PAYU_MERCHANT_SALT</code>)
+                      are awaiting PayU activation. Once configured in Vercel environment variables, online checkout
+                      activates automatically without code changes.
+                    </p>
+                  </div>
+                )}
+
+                {/* Authentication Check */}
+                {!currentUser && (
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-900 dark:text-white block">
+                        Google Sign-In Required for Online Payment
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        Sign in to cryptographically bind your PayU order &amp; receipt to your applicant account.
+                      </span>
+                    </div>
+                    {onSignInGoogle && (
+                      <button
+                        type="button"
+                        onClick={onSignInGoogle}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>Sign In</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {payuError && (
+                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 font-medium">
+                    {payuError}
+                  </div>
+                )}
+
+                {/* Policy Acknowledgement */}
+                <label className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={payuPolicyAccepted}
+                    onChange={(e) => setPayuPolicyAccepted(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>
+                    I understand payment confirmation is verified server-side via PayU before receipt issuance, and I agree to the{' '}
+                    <button type="button" onClick={() => handlePolicyJump('refund')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Refund Policy
+                    </button>
+                    ,{' '}
+                    <button type="button" onClick={() => handlePolicyJump('cancellation')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Cancellation Policy
+                    </button>
+                    , and{' '}
+                    <button type="button" onClick={() => handlePolicyJump('terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Terms &amp; Conditions
+                    </button>
+                    .
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={initiatingPayu || !currentUser || (payuConfig !== null && !payuConfig.configured)}
+                  onClick={handleLaunchPayUCheckout}
+                  className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {initiatingPayu ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Signing Order &amp; Redirecting to PayU...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" />
+                      <span>
+                        Proceed to PayU Hosted Checkout (₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')} INR)
+                      </span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </>
+                  )}
+                </button>
               </div>
             ) : (
               <form onSubmit={handleSubmitReference} className="space-y-4">
@@ -285,7 +534,7 @@ export function PaymentModal({
                       </div>
                     </div>
                     <div>
-                      <span className="text-[10px] text-slate-400 block">Bank Name & Branch</span>
+                      <span className="text-[10px] text-slate-400 block">Bank Name &amp; Branch</span>
                       <span className="font-bold text-slate-900 dark:text-white">
                         {config.bankDetails.bankName} ({config.bankDetails.branchName})
                       </span>
@@ -320,7 +569,7 @@ export function PaymentModal({
                     </div>
                   </div>
 
-                  {/* Verified Indian Bank UPI QRs Only (NO crypto/Binance) */}
+                  {/* Verified Indian Bank UPI QRs Only */}
                   <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1">
@@ -387,7 +636,6 @@ export function PaymentModal({
                   </div>
                 </div>
 
-                {/* Explicit Policy Acknowledgement */}
                 <label className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
                   <input
                     type="checkbox"
@@ -407,7 +655,7 @@ export function PaymentModal({
                     </button>
                     , and{' '}
                     <button type="button" onClick={() => handlePolicyJump('terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
-                      Terms & Conditions
+                      Terms &amp; Conditions
                     </button>
                     .
                   </span>
@@ -436,7 +684,6 @@ export function PaymentModal({
             )}
           </div>
         ) : (
-          /* Honest Pending Verification Acknowledgement Screen */
           <div className="py-2 text-center space-y-5">
             <div className="w-14 h-14 bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 rounded-full flex items-center justify-center mx-auto">
               <Clock className="w-7 h-7" />

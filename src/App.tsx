@@ -1,11 +1,19 @@
 import { useState, useEffect } from 'react';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { auth, signInWithGoogle, signOutUser, isUserAdmin, fetchApplicationsFromFirestore } from './services/firebase';
+import {
+  auth,
+  signInWithGoogle,
+  signOutUser,
+  isUserAdmin,
+  fetchApplicationsFromFirestore,
+  fetchMyApplicationsFromFirestore
+} from './services/firebase';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
 import { FranchisePlansView } from './components/portal/FranchisePlansView';
 import { ApplicationWizard } from './components/portal/ApplicationWizard';
 import { ApplicantStatusTracker } from './components/portal/ApplicantStatusTracker';
+import { PaymentResultView } from './components/portal/PaymentResultView';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AnalyticsView } from './components/admin/AnalyticsView';
 import { ApiDocsView } from './components/docs/ApiDocsView';
@@ -59,7 +67,8 @@ const PATH_TO_TAB: Record<string, string> = {
   '/admin': 'admin',
   '/analytics': 'analytics',
   '/api-docs': 'api',
-  '/api': 'api'
+  '/api': 'api',
+  '/payment-result': 'payment-result'
 };
 
 const TAB_TO_PATH: Record<string, string> = {
@@ -78,7 +87,8 @@ const TAB_TO_PATH: Record<string, string> = {
   delivery: '/delivery-policy',
   admin: '/admin',
   analytics: '/analytics',
-  api: '/api-docs'
+  api: '/api-docs',
+  'payment-result': '/payment-result'
 };
 
 const VALID_TABS = new Set(Object.keys(TAB_TO_PATH));
@@ -225,6 +235,17 @@ export default function App() {
         }
       } else {
         setUserRole('applicant');
+        if (user?.uid) {
+          try {
+            const myApps = await fetchMyApplicationsFromFirestore(user.uid);
+            if (myApps && myApps.length > 0) {
+              myApps.forEach((app) => FranchiseStorageService.saveApplication(app, false));
+              refreshAllData();
+            }
+          } catch (err) {
+            console.warn('Could not sync applicant Firestore applications:', err);
+          }
+        }
       }
     });
     return () => unsubscribe();
@@ -358,6 +379,8 @@ export default function App() {
             initialPlanId={wizardPlanId}
             currency={currency}
             onToggleCurrency={setCurrency}
+            currentUser={currentUser}
+            onSignInGoogle={handleSignInGoogle}
             onNavigate={handleNavigate}
             onApplicationCreated={(newApp) => {
               setSelectedAppId(newApp.id);
@@ -377,7 +400,23 @@ export default function App() {
             onRefresh={refreshAllData}
             onSelectApplication={setSelectedAppId}
             currentUser={currentUser}
+            onSignInGoogle={handleSignInGoogle}
+            onNavigate={handleNavigate}
             userRole={userRole}
+          />
+        )}
+
+        {currentTab === 'payment-result' && (
+          <PaymentResultView
+            currentUser={currentUser}
+            onSignInGoogle={handleSignInGoogle}
+            onNavigate={handleNavigate}
+            onRefresh={refreshAllData}
+            onNavigateToTracker={(appId) => {
+              setSelectedAppId(appId);
+              handleNavigate('tracker');
+              refreshAllData();
+            }}
           />
         )}
 
@@ -408,7 +447,9 @@ export default function App() {
           <AnalyticsView currentUser={currentUser} onSignInGoogle={handleSignInGoogle} />
         )}
 
-        {currentTab === 'api' && <ApiDocsView />}
+        {currentTab === 'api' && (
+          <ApiDocsView currentUser={currentUser} onSignInGoogle={handleSignInGoogle} />
+        )}
       </main>
 
       {/* Enterprise Global Footer with All Required Legal & Transparency Links */}

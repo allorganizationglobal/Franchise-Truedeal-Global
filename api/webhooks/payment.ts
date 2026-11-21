@@ -1,16 +1,17 @@
 import crypto from 'crypto';
+import { processPayUGatewayResponse, timingSafeHexEquals } from '../../src/server/payuService';
 
 /**
  * Vercel Serverless Function: POST /api/webhooks/payment
- * Secure server-side webhook handler for payment providers
- * Validates webhook signatures, prevents replay attacks, and processes idempotently
+ * Legacy webhook endpoint updated to route PayU India Classic reverse-hash payloads cleanly
+ * or validate HMAC-SHA256 signatures in constant time when PAYMENT_WEBHOOK_SECRET is configured.
  */
 
-// In-memory set of processed webhook transaction IDs to ensure idempotency
 const processedWebhookTxIds = new Set<string>();
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 
   if (req.method !== 'POST') {
     res.statusCode = 405;
@@ -20,67 +21,72 @@ export default async function handler(req: any, res: any) {
   let body = req.body;
   if (typeof body === 'string') {
     try {
-      body = JSON.parse(body);
+      if (body.trim().startsWith('{')) {
+        body = JSON.parse(body);
+      } else {
+        body = Object.fromEntries(new URLSearchParams(body).entries());
+      }
     } catch {
       res.statusCode = 400;
-      return res.end(JSON.stringify({ error: 'invalid_json' }));
+      return res.end(JSON.stringify({ error: 'invalid_payload' }));
     }
   }
 
-  const webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET;
-  const providedSignature = req.headers['x-webhook-signature'] || req.headers['x-razorpay-signature'] || '';
-
-  // Signature verification if webhook secret is configured
-  if (webhookSecret) {
-    const rawPayload = typeof req.body === 'string' ? req.body : JSON.stringify(body);
-    const expectedSig = crypto.createHmac('sha256', webhookSecret).update(rawPayload).digest('hex');
-    if (providedSignature !== expectedSig) {
-      console.warn('[Payment Webhook] Signature mismatch');
-      res.statusCode = 401;
-      return res.end(JSON.stringify({ error: 'invalid_signature', message: 'Webhook signature verification failed' }));
-    }
+  // Delegate PayU payloads directly to authoritative PayU processor
+  if (body?.txnid && body?.hash && body?.key) {
+    const sig =
+      (req.headers?.['x-payu-signature'] as string) ||
+      (req.headers?.['x-webhook-signature'] as string) ||
+      undefined;
+    const result = await processPayUGatewayResponse(body, 'webhook', sig);
+    res.statusCode = result.statusCode;
+    return res.end(JSON.stringify(result));
   }
 
-  const eventType = body?.event || body?.type || 'payment.captured';
-  const paymentData = body?.payload?.payment?.entity || body?.data || body;
+  const webhookSecret = process.env.PAYU_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET;
+  const providedSignature =
+    (req.headers?.['x-payu-signature'] as string) ||
+    (req.headers?.['x-webhook-signature'] as string) ||
+    '';
+
+  if (!webhookSecret) {
+    res.statusCode = 503;
+    return res.end(JSON.stringify({ error: 'webhook_not_configured', message: 'Payment webhook secret is not configured.' }));
+  }
+
+  const rawPayload = typeof req.body === 'string' ? req.body : JSON.stringify(body);
+  const expectedSig = crypto.createHmac('sha256', webhookSecret).update(rawPayload).digest('hex');
+  if (!timingSafeHexEquals(expectedSig, providedSignature)) {
+    res.statusCode = 401;
+    return res.end(JSON.stringify({ error: 'invalid_signature', message: 'Webhook signature verification failed.' }));
+  }
+
+  const paymentData = body?.data || body;
   const transactionId = paymentData?.id || paymentData?.transactionId || paymentData?.referenceCode;
-  const applicationId = paymentData?.notes?.applicationId || body?.applicationId;
-  const amount = paymentData?.amount ? paymentData.amount / 100 : body?.amount;
-  const currency = paymentData?.currency || body?.currency || 'INR';
-
   if (!transactionId) {
     res.statusCode = 400;
     return res.end(JSON.stringify({ error: 'missing_transaction_id' }));
   }
 
-  // Idempotency check: prevent duplicate replay processing
   if (processedWebhookTxIds.has(transactionId)) {
-    console.info(`[Payment Webhook] Duplicate transaction ${transactionId} acknowledged idempotently.`);
     res.statusCode = 200;
     return res.end(
       JSON.stringify({
         success: true,
         status: 'duplicate_acknowledged',
-        transactionId,
-        message: 'Transaction has already been processed.'
+        transactionId
       })
     );
   }
 
   processedWebhookTxIds.add(transactionId);
-
-  // Return confirmed receipt
   res.statusCode = 200;
   return res.end(
     JSON.stringify({
       success: true,
       status: 'processed',
       transactionId,
-      applicationId: applicationId || null,
-      amount,
-      currency,
-      timestamp: new Date().toISOString(),
-      message: 'Payment verification recorded successfully on server.'
+      timestamp: new Date().toISOString()
     })
   );
 }

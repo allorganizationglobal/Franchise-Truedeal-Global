@@ -1,8 +1,10 @@
-import { resolveServerUserRole, createSignedSessionToken, ROLE_PERMISSIONS } from '../../src/server/authService';
+import { createSignedSessionToken } from '../../src/server/authService';
+import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify';
 
 /**
  * Vercel Serverless Function: POST /api/auth/verify
- * Validates authenticated user identity and returns server-verified session
+ * Cryptographically verifies a Firebase Auth ID token (never trusts client-supplied email/uid/role)
+ * and issues a signed server session token with server-resolved RBAC permissions.
  */
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
@@ -30,31 +32,23 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  const email = body?.email;
-  const uid = body?.uid;
-  const name = body?.name || 'User';
-
-  if (!email || typeof email !== 'string' || !uid) {
-    res.statusCode = 400;
+  const verified = await verifyFirebaseBearerToken(req.headers?.authorization, body?.idToken);
+  if (!verified.valid || !verified.uid || !verified.email || !verified.role) {
+    res.statusCode = 401;
     return res.end(
       JSON.stringify({
         authenticated: false,
-        error: 'missing_credentials',
-        message: 'Valid authenticated email and UID are required'
+        error: 'unauthorized',
+        message: verified.error || 'Valid Firebase ID token is required.'
       })
     );
   }
 
-  // Server-side role resolution from trusted allowlists
-  const serverEnforcedRole = resolveServerUserRole(email);
-  const permissions = ROLE_PERMISSIONS[serverEnforcedRole] || [];
-
-  // Issue tamper-proof HMAC signed session token
   const sessionToken = createSignedSessionToken({
-    uid,
-    email,
-    name,
-    role: serverEnforcedRole
+    uid: verified.uid,
+    email: verified.email,
+    name: verified.name || 'Authorized User',
+    role: verified.role
   });
 
   res.statusCode = 200;
@@ -62,12 +56,12 @@ export default async function handler(req: any, res: any) {
     JSON.stringify({
       authenticated: true,
       user: {
-        uid,
-        email: email.toLowerCase().trim(),
-        name,
-        role: serverEnforcedRole,
-        permissions,
-        isAdmin: serverEnforcedRole === 'super_admin' || serverEnforcedRole === 'director' || serverEnforcedRole === 'franchise_manager'
+        uid: verified.uid,
+        email: verified.email,
+        name: verified.name,
+        role: verified.role,
+        permissions: verified.permissions || [],
+        isAdmin: Boolean(verified.isAdmin)
       },
       sessionToken,
       expiresInSeconds: 8 * 3600

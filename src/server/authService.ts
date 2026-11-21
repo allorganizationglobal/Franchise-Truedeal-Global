@@ -190,6 +190,12 @@ export function getAllRuntimeRoleOverrides(): Record<string, UserRole> {
   return result;
 }
 
+const EPHEMERAL_SESSION_SECRET = crypto.randomBytes(32).toString('hex');
+
+function getSessionSecret(): string {
+  return process.env.SESSION_SECRET || EPHEMERAL_SESSION_SECRET;
+}
+
 /**
  * Creates a signed tamper-proof session token using server-side HMAC
  */
@@ -199,7 +205,7 @@ export function createSignedSessionToken(payload: {
   name?: string;
   role: UserRole;
 }): string {
-  const secret = process.env.SESSION_SECRET || 'truedeal_franchise_vault_session_key_2026';
+  const secret = getSessionSecret();
   const issuedAt = Date.now();
   const expiresAt = issuedAt + 8 * 60 * 60 * 1000; // 8 hours expiry
 
@@ -237,10 +243,13 @@ export function verifySessionToken(token: string): {
   }
 
   const [base64Data, providedSignature] = parts;
-  const secret = process.env.SESSION_SECRET || 'truedeal_franchise_vault_session_key_2026';
+  const secret = getSessionSecret();
 
   const expectedSignature = crypto.createHmac('sha256', secret).update(base64Data).digest('base64url');
-  if (providedSignature !== expectedSignature) {
+  if (
+    providedSignature.length !== expectedSignature.length ||
+    !crypto.timingSafeEqual(Buffer.from(providedSignature, 'utf8'), Buffer.from(expectedSignature, 'utf8'))
+  ) {
     return { valid: false, error: 'Invalid session signature' };
   }
 

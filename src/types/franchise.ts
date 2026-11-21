@@ -116,8 +116,20 @@ export interface ContactInquiry {
   emailDispatched?: boolean;
 }
 
+export type PayUPaymentStatus =
+  | 'CREATED'
+  | 'PAYMENT_PENDING'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'REFUND_PENDING'
+  | 'REFUNDED'
+  | 'UNDER_REVIEW';
+
 export type ApplicationStatus =
   | 'draft'
+  | 'PAYMENT_PENDING'
   | 'submitted'
   | 'under_review'
   | 'documents_required'
@@ -172,6 +184,8 @@ export interface DocumentUpload {
   encryptionAlgorithm: 'AES-GCM-256';
   cipherChecksum: string;
   ivHex: string;
+  storagePath?: string;
+  downloadUrl?: string;
   previewDataUrl?: string;
   auditNotes?: string;
 }
@@ -182,8 +196,14 @@ export interface PaymentRecord {
   type: 'application_fee' | 'franchise_deposit';
   amount: number;
   currency: string;
-  method: 'card' | 'ach' | 'escrow_wire' | 'upi_bank_transfer' | 'razorpay_pending';
+  method: 'payu_hosted' | 'card' | 'ach' | 'escrow_wire' | 'upi_bank_transfer' | 'razorpay_pending';
   status: 'completed' | 'processing' | 'failed';
+  payuStatus?: PayUPaymentStatus;
+  txnId?: string;
+  payuTransactionId?: string;
+  paymentMethod?: string;
+  verifiedAt?: string;
+  gatewayResponseSummary?: string;
   transactionHash: string;
   referenceCode: string;
   timestamp: string;
@@ -223,6 +243,7 @@ export interface DocumentChecklistItem {
 
 export interface FranchiseApplication {
   id: string; // e.g. "TDG-2026-104"
+  userId?: string;
   createdAt: string;
   updatedAt: string;
   concurrencyVersion?: number;
@@ -245,6 +266,11 @@ export interface FranchiseApplication {
   };
   planId: string;
   currency?: Currency;
+  amount?: number;
+  paymentStatus?: PayUPaymentStatus;
+  paymentId?: string;
+  txnId?: string;
+  payuTransactionId?: string;
   territoryRequested: string;
   preferredStartDate: string;
   operationalExperienceYears: number;
