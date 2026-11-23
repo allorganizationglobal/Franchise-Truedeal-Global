@@ -11,8 +11,6 @@ import {
   Check,
   Info,
   AlertTriangle,
-  CreditCard,
-  ExternalLink,
   Loader2,
   LogIn,
   CheckCircle2,
@@ -43,13 +41,6 @@ interface PaymentModalProps {
   onSignInGoogle?: () => void;
   onPaymentSuccess?: (payment: PaymentRecord) => void;
   onNavigate?: (tab: string) => void;
-}
-
-interface PayUStatusConfig {
-  configured: boolean;
-  env: 'test' | 'production';
-  checkoutUrl: string;
-  missingEnvVars?: string[];
 }
 
 interface RazorpayStatusConfig {
@@ -88,7 +79,7 @@ export function PaymentModal({
   const plan = getPlanById(application.planId);
   const feeBreakdown = calculateFeeBreakdownINR(amount, config);
 
-  const [activeMode, setActiveMode] = useState<'razorpay' | 'payu_hosted' | 'bank_upi'>('razorpay');
+  const [activeMode, setActiveMode] = useState<'razorpay' | 'bank_upi'>('razorpay');
 
   // Razorpay Standard Checkout state
   const [rzpConfig, setRzpConfig] = useState<RazorpayStatusConfig | null>(null);
@@ -99,13 +90,6 @@ export function PaymentModal({
   const [verifiedRazorpayPayment, setVerifiedRazorpayPayment] = useState<PaymentRecord | null>(null);
   const [hasFailedOrCancelledAttempt, setHasFailedOrCancelledAttempt] = useState(false);
   const rzpClickLockRef = useRef(false);
-
-  // PayU Classic Hosted Checkout state (preserved)
-  const [payuConfig, setPayuConfig] = useState<PayUStatusConfig | null>(null);
-  const [loadingPayuConfig, setLoadingPayuConfig] = useState(false);
-  const [initiatingPayu, setInitiatingPayu] = useState(false);
-  const [payuError, setPayuError] = useState<string | null>(null);
-  const [payuPolicyAccepted, setPayuPolicyAccepted] = useState(false);
 
   // Corporate Bank / UPI Transfer state (preserved)
   const [selectedQrTab, setSelectedQrTab] = useState<'bob' | 'idbi'>('bob');
@@ -122,7 +106,6 @@ export function PaymentModal({
     setActiveMode('razorpay');
     let active = true;
     setLoadingRzpConfig(true);
-    setLoadingPayuConfig(true);
 
     fetch('/api/payments/razorpay/status?mode=config')
       .then((res) => res.json())
@@ -144,25 +127,6 @@ export function PaymentModal({
       })
       .finally(() => {
         if (active) setLoadingRzpConfig(false);
-      });
-
-    fetch('/api/payments/payu/status?mode=config')
-      .then((res) => res.json())
-      .then((data) => {
-        if (active && data?.config) {
-          setPayuConfig({
-            configured: Boolean(data.config.configured),
-            env: data.config.env === 'production' ? 'production' : 'test',
-            checkoutUrl: String(data.config.checkoutUrl || 'https://test.payu.in/_payment'),
-            missingEnvVars: Array.isArray(data.config.missingEnvVars) ? data.config.missingEnvVars : []
-          });
-        }
-      })
-      .catch(() => {
-        if (active) setPayuConfig(null);
-      })
-      .finally(() => {
-        if (active) setLoadingPayuConfig(false);
       });
 
     return () => {
@@ -600,104 +564,6 @@ export function PaymentModal({
     }
   };
 
-  const handleLaunchPayUCheckout = async () => {
-    setPayuError(null);
-
-    if (!currentUser) {
-      setPayuError('Please sign in with your Google account first so your payment is securely bound to your verified applicant identity.');
-      return;
-    }
-
-    if (!payuPolicyAccepted) {
-      setPayuError('Please confirm that you have reviewed the Refund Policy, Cancellation Policy, and Terms & Conditions before proceeding to PayU Hosted Checkout.');
-      return;
-    }
-
-    if (!application.id || application.id === 'PENDING') {
-      setPayuError('Please submit your application first to obtain an official Application Reference ID before initiating PayU Hosted Checkout.');
-      return;
-    }
-
-    setInitiatingPayu(true);
-    try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) {
-        setPayuError('Unable to obtain a valid Firebase authentication token. Please sign out and sign in again.');
-        setInitiatingPayu(false);
-        return;
-      }
-
-      const response = await fetch('/api/payments/payu/initiate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
-        body: JSON.stringify({
-          applicationId: application.id,
-          planId: application.planId,
-          applicantName: application.applicant.fullName,
-          phone: application.applicant.phone
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data?.ok || !data?.checkoutUrl || !data?.formFields) {
-        setPayuError(
-          data?.message ||
-            (response.status === 503
-              ? 'PayU India Hosted Checkout credentials are not yet activated on this server (account currently under verification).'
-              : 'Could not initiate PayU Hosted Checkout. Please try again or contact support.')
-        );
-        setInitiatingPayu(false);
-        return;
-      }
-
-      if (data.payment?.txnId) {
-        const pendingRecord: PaymentRecord = {
-          id: data.payment.paymentId || `pay_${data.payment.txnId}`,
-          applicationId: application.id,
-          type: paymentType,
-          amount: data.payment.amount,
-          currency: 'INR',
-          method: 'payu_hosted',
-          gateway: 'payu',
-          status: 'processing',
-          payuStatus: 'PAYMENT_PENDING',
-          txnId: data.payment.txnId,
-          transactionHash: data.payment.txnId,
-          referenceCode: data.payment.txnId,
-          timestamp: data.payment.createdAt || new Date().toISOString(),
-          receiptNumber: 'PENDING-PAYU-VERIFICATION',
-          billingName: application.applicant.fullName,
-          gstAmount: data.payment.gstAmountINR || 0,
-          totalWithGst: data.payment.amount
-        };
-        FranchiseStorageService.addPayment(application.id, pendingRecord);
-      }
-
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = data.checkoutUrl;
-      form.style.display = 'none';
-
-      Object.entries(data.formFields as Record<string, string>).forEach(([fieldName, fieldVal]) => {
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = fieldName;
-        input.value = String(fieldVal ?? '');
-        form.appendChild(input);
-      });
-
-      document.body.appendChild(form);
-      form.submit();
-    } catch (err: any) {
-      setPayuError(err?.message || 'Network error while connecting to the payment initiation endpoint.');
-      setInitiatingPayu(false);
-    }
-  };
-
   const handleSubmitReference = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
@@ -922,8 +788,8 @@ export function PaymentModal({
               </div>
             </div>
 
-            {/* Channel Tabs: Razorpay Standard Checkout (Primary) | Corporate Bank / UPI | Optional PayU (only if configured) */}
-            <div className={`grid ${payuConfig?.configured ? 'grid-cols-3' : 'grid-cols-2'} gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl`}>
+            {/* Channel Tabs: Razorpay Standard Checkout (Primary) | Corporate Bank / UPI */}
+            <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
               <button
                 type="button"
                 onClick={() => setActiveMode('razorpay')}
@@ -953,20 +819,6 @@ export function PaymentModal({
                 <Building2 className="w-3.5 h-3.5 shrink-0" />
                 <span>Corporate Bank / UPI</span>
               </button>
-              {payuConfig?.configured && (
-                <button
-                  type="button"
-                  onClick={() => setActiveMode('payu_hosted')}
-                  className={`py-2.5 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                    activeMode === 'payu_hosted'
-                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                  }`}
-                >
-                  <CreditCard className="w-3.5 h-3.5 shrink-0" />
-                  <span>PayU Hosted Checkout</span>
-                </button>
-              )}
             </div>
 
             {activeMode === 'razorpay' ? (
@@ -1142,127 +994,6 @@ export function PaymentModal({
                       <span>
                         Pay Now via Razorpay (₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')} INR)
                       </span>
-                    </>
-                  )}
-                </button>
-              </div>
-            ) : activeMode === 'payu_hosted' ? (
-              <div className="space-y-4">
-                {/* PayU Security & Environment Banner */}
-                <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-2 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
-                      <span>PayU India Official Hosted Checkout</span>
-                    </span>
-                    {loadingPayuConfig ? (
-                      <span className="text-[10px] font-mono text-slate-500">Checking gateway...</span>
-                    ) : payuConfig?.configured ? (
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 uppercase">
-                        {payuConfig.env === 'production' ? 'LIVE READY' : 'TEST SANDBOX READY'}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase">
-                        PENDING ACTIVATION
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-indigo-900/90 dark:text-indigo-200/90 leading-relaxed">
-                    You will be redirected to PayU India&apos;s PCI-DSS hosted checkout page for UPI, NetBanking, Debit/Credit
-                    Cards, and Wallets. Amount and SHA-512 cryptographic signature are calculated strictly on our server.
-                    This portal never collects or stores card numbers, CVV, or OTP.
-                  </p>
-                </div>
-
-                {/* Gateway Pending Activation Honest Notice */}
-                {!loadingPayuConfig && payuConfig && !payuConfig.configured && (
-                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2 text-xs text-amber-950 dark:text-amber-200">
-                    <div className="flex items-center gap-2 font-bold">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>PayU Merchant Account Verification In Progress</span>
-                    </div>
-                    <p className="leading-relaxed">
-                      Server-side PayU Classic Hosted Checkout integration is complete, and merchant credentials
-                      (<code className="font-mono">PAYU_MERCHANT_KEY</code> / <code className="font-mono">PAYU_MERCHANT_SALT</code>)
-                      are awaiting PayU activation. Once configured in Vercel environment variables, online checkout
-                      activates automatically without code changes.
-                    </p>
-                  </div>
-                )}
-
-                {/* Authentication Check */}
-                {!currentUser && (
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-slate-900 dark:text-white block">
-                        Google Sign-In Required for Online Payment
-                      </span>
-                      <span className="text-slate-500 dark:text-slate-400">
-                        Sign in to cryptographically bind your PayU order &amp; receipt to your applicant account.
-                      </span>
-                    </div>
-                    {onSignInGoogle && (
-                      <button
-                        type="button"
-                        onClick={onSignInGoogle}
-                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
-                      >
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>Sign In</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {payuError && (
-                  <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 font-medium">
-                    {payuError}
-                  </div>
-                )}
-
-                {/* Policy Acknowledgement */}
-                <label className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={payuPolicyAccepted}
-                    onChange={(e) => setPayuPolicyAccepted(e.target.checked)}
-                    className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span>
-                    I understand payment confirmation is verified server-side via PayU before receipt issuance, and I agree to the{' '}
-                    <button type="button" onClick={() => handlePolicyJump('refund')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
-                      Refund Policy
-                    </button>
-                    ,{' '}
-                    <button type="button" onClick={() => handlePolicyJump('cancellation')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
-                      Cancellation Policy
-                    </button>
-                    , and{' '}
-                    <button type="button" onClick={() => handlePolicyJump('terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
-                      Terms &amp; Conditions
-                    </button>
-                    .
-                  </span>
-                </label>
-
-                <button
-                  type="button"
-                  disabled={initiatingPayu || !currentUser || (payuConfig !== null && !payuConfig.configured)}
-                  onClick={handleLaunchPayUCheckout}
-                  className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  {initiatingPayu ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Signing Order &amp; Redirecting to PayU...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="w-4 h-4" />
-                      <span>
-                        Proceed to PayU Hosted Checkout (₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')} INR)
-                      </span>
-                      <ExternalLink className="w-3.5 h-3.5" />
                     </>
                   )}
                 </button>

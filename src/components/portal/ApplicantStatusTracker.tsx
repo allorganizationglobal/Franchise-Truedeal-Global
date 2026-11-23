@@ -54,7 +54,6 @@ export function ApplicantStatusTracker({
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
-  const [reconcilingTxnId, setReconcilingTxnId] = useState<string | null>(null);
   const [syncingRazorpay, setSyncingRazorpay] = useState(false);
   
   // Verification Gate States
@@ -261,63 +260,6 @@ export function ApplicantStatusTracker({
   const summaryPaymentInfo = latestPayment
     ? getCustomerPaymentStatusInfo(latestPayment.payuStatus, latestPayment.status)
     : getCustomerPaymentStatusInfo(currentApp.paymentStatus, undefined);
-
-  const handleVerifyPayUTxn = async (txnId: string) => {
-    if (!currentUser) {
-      NotificationService.addNotification(
-        'Sign-In Required',
-        'Please sign in with Google to run live PayU transaction verification.',
-        'warning'
-      );
-      return;
-    }
-    setReconcilingTxnId(txnId);
-    try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) return;
-      const res = await fetch('/api/payments/payu/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ txnid: txnId })
-      });
-      const data = await res.json();
-      if (data?.payment) {
-        const mappedStatus: PaymentRecord['status'] =
-          data.payment.paymentStatus === 'SUCCESS'
-            ? 'completed'
-            : data.payment.paymentStatus === 'FAILED' || data.payment.paymentStatus === 'CANCELLED'
-            ? 'failed'
-            : 'processing';
-        FranchiseStorageService.updatePaymentStatus(
-          currentApp.id,
-          data.payment.paymentId || currentApp.payments.find((p) => p.txnId === txnId)?.id || txnId,
-          mappedStatus,
-          currentUser.email || 'applicant'
-        );
-        NotificationService.addNotification(
-          `PayU Status: ${data.payment.paymentStatus}`,
-          data.message || `Verified transaction ${txnId} with PayU.`,
-          data.payment.paymentStatus === 'SUCCESS' ? 'success' : 'info',
-          currentApp.id
-        );
-        onRefresh();
-      } else {
-        NotificationService.addNotification(
-          'PayU Verification Notice',
-          data?.message || 'Could not confirm transaction status yet.',
-          'warning',
-          currentApp.id
-        );
-      }
-    } catch {
-      NotificationService.addNotification('Verification Error', 'Unable to reach PayU verification service.', 'error');
-    } finally {
-      setReconcilingTxnId(null);
-    }
-  };
 
   const currentStageIdx = getStageIndex(currentApp.status);
 
@@ -972,7 +914,7 @@ export function ApplicantStatusTracker({
                 Razorpay &amp; Franchise Payment Tracker
               </h3>
               <p className="text-xs text-slate-500">
-                Official receipts are issued strictly after server-side Razorpay / PayU capture verification or bank reconciliation.
+                Official receipts are issued strictly after server-side Razorpay capture verification or corporate bank reconciliation.
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
@@ -1086,8 +1028,7 @@ export function ApplicantStatusTracker({
                         {pay.razorpayPaymentId ? `Razorpay Payment: ${pay.razorpayPaymentId} · ` : ''}
                         {pay.razorpayOrderId
                           ? `Order: ${pay.razorpayOrderId}`
-                          : `Ref/Txn: ${pay.txnId || pay.referenceCode}`}
-                        {pay.payuTransactionId ? ` · PayU ID: ${pay.payuTransactionId}` : ''} ·{' '}
+                          : `Ref/Txn: ${pay.txnId || pay.referenceCode}`} ·{' '}
                         {new Date(pay.timestamp).toLocaleDateString('en-IN')}
                       </span>
                       {pay.failureReason && !statusInfo.verified && (
@@ -1116,17 +1057,6 @@ export function ApplicantStatusTracker({
                           >
                             <Printer className="w-3 h-3" />
                             <span>Receipt</span>
-                          </button>
-                        )}
-                        {!statusInfo.verified && pay.method === 'payu_hosted' && pay.txnId && (
-                          <button
-                            type="button"
-                            disabled={reconcilingTxnId === pay.txnId}
-                            onClick={() => handleVerifyPayUTxn(pay.txnId!)}
-                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                          >
-                            <RefreshCw className={`w-3 h-3 ${reconcilingTxnId === pay.txnId ? 'animate-spin' : ''}`} />
-                            <span>Verify with PayU</span>
                           </button>
                         )}
                       </div>

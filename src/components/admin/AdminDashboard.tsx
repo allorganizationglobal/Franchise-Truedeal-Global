@@ -162,27 +162,15 @@ export function AdminDashboard({
   );
   const [inquiryFilter, setInquiryFilter] = useState<'all' | ContactInquiry['status']>('all');
 
-  // Server-authoritative PayU Ledger & Webhook Events
-  const [payuLoading, setPayuLoading] = useState(false);
-  const [payuActionTxnId, setPayuActionTxnId] = useState<string | null>(null);
-  const [payuStats, setPayuStats] = useState<{
-    totalTransactions: number;
-    pendingCount: number;
-    successCount: number;
-    failedCount: number;
-    refundPendingCount: number;
-    refundedCount: number;
-    totalVerifiedCollectionsINR: number;
-  } | null>(null);
-  const [payuPayments, setPayuPayments] = useState<any[]>([]);
-  const [payuWebhooks, setPayuWebhooks] = useState<any[]>([]);
+  // Server-authoritative Razorpay Ledger & Webhook Events
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
   const [razorpayStats, setRazorpayStats] = useState<AdminRazorpayStats | null>(null);
   const [razorpayPayments, setRazorpayPayments] = useState<AdminRazorpayPayment[]>([]);
   const [razorpayWebhooks, setRazorpayWebhooks] = useState<AdminRazorpayWebhookEvent[]>([]);
 
-  const fetchServerPayULedger = useCallback(async () => {
+  const fetchServerPaymentLedger = useCallback(async () => {
     if (!currentUser || !isUserAdmin(currentUser.email)) return;
-    setPayuLoading(true);
+    setPaymentsLoading(true);
     try {
       const idToken = await getFirebaseIdToken();
       if (!idToken) return;
@@ -192,9 +180,6 @@ export function AdminDashboard({
       if (!res.ok) return;
       const data = await res.json();
       if (data?.ok) {
-        setPayuStats(data.stats || null);
-        setPayuPayments(Array.isArray(data.payments) ? data.payments : []);
-        setPayuWebhooks(Array.isArray(data.webhookEvents) ? data.webhookEvents : []);
         setRazorpayStats(data.razorpayStats || null);
         setRazorpayPayments(Array.isArray(data.razorpayPayments) ? data.razorpayPayments : []);
         setRazorpayWebhooks(Array.isArray(data.razorpayWebhooks) ? data.razorpayWebhooks : []);
@@ -202,46 +187,15 @@ export function AdminDashboard({
     } catch {
       // Non-blocking
     } finally {
-      setPayuLoading(false);
+      setPaymentsLoading(false);
     }
   }, [currentUser]);
 
   useEffect(() => {
     if (activeSection === 'overview' || activeSection === 'payments') {
-      fetchServerPayULedger();
+      fetchServerPaymentLedger();
     }
-  }, [activeSection, fetchServerPayULedger]);
-
-  const handlePayUAdminAction = async (
-    txnid: string,
-    action: 'reconcile' | 'mark_refund_pending' | 'mark_refunded'
-  ) => {
-    if (!currentUser) return;
-    setPayuActionTxnId(txnid);
-    try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) return;
-      const res = await fetch('/api/admin/payments', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ txnid, action })
-      });
-      const data = await res.json();
-      NotificationService.addNotification(
-        action === 'reconcile' ? 'PayU Reconciliation Result' : 'Refund Status Updated',
-        data?.message || (data?.ok ? `Updated ${txnid} successfully.` : `Action failed for ${txnid}.`),
-        data?.ok ? 'success' : 'warning'
-      );
-      await fetchServerPayULedger();
-    } catch {
-      NotificationService.addNotification('PayU Action Failed', 'Unable to reach admin payments endpoint.', 'error');
-    } finally {
-      setPayuActionTxnId(null);
-    }
-  };
+  }, [activeSection, fetchServerPaymentLedger]);
 
   const triggerServerDecisionEmail = async (
     event: 'application_approved' | 'application_rejected',
@@ -281,7 +235,7 @@ export function AdminDashboard({
     if (selectedApp) {
       setSelectedApp(fresh.find(a => a.id === selectedApp.id) || null);
     }
-    fetchServerPayULedger();
+    fetchServerPaymentLedger();
     onRefresh();
   };
 
@@ -852,12 +806,12 @@ export function AdminDashboard({
             </div>
 
             <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Verified Collections (Razorpay + PayU + Bank)</span>
+              <span className="text-xs text-slate-500 font-medium block">Verified Collections (Razorpay + Bank)</span>
               <span className="text-2xl font-bold text-emerald-600 font-mono mt-1 block">
-                ₹{(kpiData.totalPaymentsReceived + (payuStats?.totalVerifiedCollectionsINR || 0) + (razorpayStats?.totalCapturedCollectionsINR || 0)).toLocaleString('en-IN')}
+                ₹{(kpiData.totalPaymentsReceived + (razorpayStats?.totalCapturedCollectionsINR || 0)).toLocaleString('en-IN')}
               </span>
               <span className="text-[11px] text-amber-600 font-semibold mt-1 block">
-                {kpiData.pendingBankReconciliationCount + (payuStats?.pendingCount || 0) + (razorpayStats?.pendingCount || 0)} Pending · {(payuStats?.failedCount || 0) + (razorpayStats?.failedCount || 0)} Failed · {(payuStats?.refundedCount || 0) + (razorpayStats?.refundedCount || 0)} Refunded
+                {kpiData.pendingBankReconciliationCount + (razorpayStats?.pendingCount || 0)} Pending · {razorpayStats?.failedCount || 0} Failed · {razorpayStats?.refundedCount || 0} Refunded
               </span>
             </div>
           </div>
@@ -1244,7 +1198,7 @@ export function AdminDashboard({
         </div>
       )}
 
-      {/* SECTION 4: RAZORPAY, PAYU & BANK PAYMENT RECONCILIATION DESK */}
+      {/* SECTION 4: RAZORPAY & CORPORATE BANK PAYMENT RECONCILIATION DESK */}
       {activeSection === 'payments' && (
         <div className="space-y-6">
           {/* Primary Private Admin Razorpay Payment Management Console */}
@@ -1252,159 +1206,9 @@ export function AdminDashboard({
             stats={razorpayStats}
             payments={razorpayPayments}
             webhooks={razorpayWebhooks}
-            loading={payuLoading}
-            onRefresh={fetchServerPayULedger}
+            loading={paymentsLoading}
+            onRefresh={fetchServerPaymentLedger}
           />
-
-          {/* Server-Authoritative PayU Transaction Ledger */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                  PayU India Hosted Checkout — Authoritative Server Ledger
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Live server-verified PayU transactions, independent verify_payment reconciliation, and refund state tracking.
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={payuLoading}
-                onClick={fetchServerPayULedger}
-                className="px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${payuLoading ? 'animate-spin' : ''}`} />
-                <span>Refresh PayU Ledger</span>
-              </button>
-            </div>
-
-            {payuStats && (
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-500 block">Pending</span>
-                  <span className="text-lg font-mono font-bold text-amber-600">{payuStats.pendingCount}</span>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-500 block">Verified Success</span>
-                  <span className="text-lg font-mono font-bold text-emerald-600">{payuStats.successCount}</span>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-500 block">Failed / Cancelled</span>
-                  <span className="text-lg font-mono font-bold text-rose-600">{payuStats.failedCount}</span>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-                  <span className="text-slate-500 block">Refunds</span>
-                  <span className="text-lg font-mono font-bold text-indigo-600">
-                    {payuStats.refundPendingCount + payuStats.refundedCount}
-                  </span>
-                </div>
-                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800">
-                  <span className="text-emerald-700 dark:text-emerald-300 block">Verified INR</span>
-                  <span className="text-lg font-mono font-bold text-emerald-700 dark:text-emerald-300">
-                    ₹{payuStats.totalVerifiedCollectionsINR.toLocaleString('en-IN')}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {payuPayments.length === 0 ? (
-              <div className="p-5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-dashed border-slate-200 dark:border-slate-700 text-xs text-slate-500 text-center">
-                No server-side PayU transactions recorded yet on this instance. Once PayU test/live payments are initiated, they appear here with live reconciliation actions.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 font-semibold">
-                    <tr>
-                      <th className="py-3 px-3">Txn ID / PayU Ref</th>
-                      <th className="py-3 px-3">Application &amp; Applicant</th>
-                      <th className="py-3 px-3">Plan &amp; Amount</th>
-                      <th className="py-3 px-3">Status</th>
-                      <th className="py-3 px-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                    {payuPayments.map((p) => (
-                      <tr key={p.txnId} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
-                        <td className="py-3 px-3 font-mono">
-                          <div className="font-bold text-indigo-600 dark:text-indigo-400">{p.txnId}</div>
-                          {p.payuTransactionId && <div className="text-[10px] text-slate-400">mihpayid: {p.payuTransactionId}</div>}
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-semibold text-slate-900 dark:text-slate-100">{p.applicantName}</div>
-                          <div className="text-[11px] font-mono text-slate-400">{p.applicationId}</div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="font-mono font-bold text-slate-900 dark:text-slate-100">₹{Number(p.amount).toLocaleString('en-IN')} INR</div>
-                          <div className="text-[11px] text-slate-500">{p.franchisePlanName}</div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            p.paymentStatus === 'SUCCESS'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}>
-                            {p.paymentStatus}
-                          </span>
-                          {p.receiptNumber && <div className="text-[10px] font-mono text-emerald-600 mt-0.5">{p.receiptNumber}</div>}
-                        </td>
-                        <td className="py-3 px-3 text-right space-x-1.5">
-                          {p.paymentStatus !== 'SUCCESS' && p.paymentStatus !== 'REFUNDED' && (
-                            <button
-                              type="button"
-                              disabled={payuActionTxnId === p.txnId}
-                              onClick={() => handlePayUAdminAction(p.txnId, 'reconcile')}
-                              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
-                            >
-                              Reconcile PayU
-                            </button>
-                          )}
-                          {p.paymentStatus === 'SUCCESS' && (
-                            <button
-                              type="button"
-                              disabled={payuActionTxnId === p.txnId}
-                              onClick={() => handlePayUAdminAction(p.txnId, 'mark_refund_pending')}
-                              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
-                            >
-                              Mark Refund Pending
-                            </button>
-                          )}
-                          {p.paymentStatus === 'REFUND_PENDING' && (
-                            <button
-                              type="button"
-                              disabled={payuActionTxnId === p.txnId}
-                              onClick={() => handlePayUAdminAction(p.txnId, 'mark_refunded')}
-                              className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-50"
-                            >
-                              Mark Refunded
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {payuWebhooks.length > 0 && (
-              <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
-                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                  Recent PayU Webhook &amp; Verification Audit Events ({payuWebhooks.length})
-                </h4>
-                <div className="max-h-40 overflow-y-auto space-y-1 text-[11px] font-mono">
-                  {payuWebhooks.slice(0, 15).map((ev) => (
-                    <div key={ev.eventId} className="flex items-center justify-between px-3 py-1.5 rounded bg-slate-50 dark:bg-slate-800/50">
-                      <span>{ev.txnId} · {ev.source} · {ev.status}{ev.duplicate ? ' (DUPLICATE)' : ''}</span>
-                      <span className="text-slate-400">{new Date(ev.receivedAt).toLocaleString('en-IN')}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
 
           {/* Preserved Corporate Bank / UPI Reconciliation Desk */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
@@ -1465,7 +1269,7 @@ export function AdminDashboard({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
-                        {payment.status === 'processing' && payment.method !== 'payu_hosted' ? (
+                        {payment.status === 'processing' && payment.method === 'upi_bank_transfer' ? (
                           <button
                             type="button"
                             onClick={() => {

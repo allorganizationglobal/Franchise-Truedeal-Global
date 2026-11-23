@@ -104,85 +104,21 @@ const ENDPOINTS: EndpointDoc[] = [
     }
   },
   {
-    method: 'POST',
-    path: '/api/payments/payu/initiate',
-    title: 'Initiate PayU India Classic Hosted Checkout',
-    description:
-      'Calculates authoritative franchise package amount strictly on the server from plansCatalog.ts, generates a unique txnid, computes the SHA-512 request hash, persists PAYMENT_PENDING, and returns signed form fields for https://test.payu.in/_payment or https://secure.payu.in/_payment.',
-    authNote: 'Requires Authorization: Bearer <FIREBASE_ID_TOKEN>',
-    sampleRequest: {
-      applicationId: 'TDG-2026-1042',
-      planId: 'plan_standard',
-      applicantName: 'Applicant Name',
-      phone: '+919876543210'
-    },
-    sampleResponse: {
-      ok: true,
-      env: 'test',
-      checkoutUrl: 'https://test.payu.in/_payment',
-      formFields: {
-        key: '<SERVER_MERCHANT_KEY>',
-        txnid: 'TDG1A2B3C4D5E',
-        amount: '4999.00',
-        productinfo: 'TRUEDEAL GLOBAL Standard Franchise Plan',
-        hash: '<SERVER_SHA512_HASH>'
-      }
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/payments/payu/callback',
-    title: 'PayU Browser Redirect Callback (surl / furl)',
-    description:
-      'Receives PayU POST callback, verifies Merchant Key and timing-safe Reverse SHA-512 hash (with additionalCharges support), independently calls PayU verify_payment API, enforces monotonic SUCCESS protection, and redirects (303) to /payment-result.',
-    authNote: 'Verified via PayU Reverse SHA-512 Hash + server-to-server verify_payment',
-    sampleResponse: {
-      redirect303: '/payment-result?txnid=TDG1A2B3C4D5E&applicationId=TDG-2026-1042&status=SUCCESS'
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/payments/payu/webhook',
-    title: 'PayU Server-to-Server Webhook Receiver',
-    description:
-      'Idempotently processes asynchronous PayU payment notifications, verifies Reverse SHA-512 hash + optional X-PayU-Signature HMAC, confirms via verify_payment API, issues verified receipt & SendGrid email ONLY on SUCCESS, and prevents downgrading verified SUCCESS records.',
-    authNote: 'Verified via PayU Reverse SHA-512 Hash & optional PAYU_WEBHOOK_SECRET HMAC',
-    sampleResponse: {
-      ok: true,
-      duplicate: false,
-      finalStatus: 'SUCCESS',
-      receiptNumber: 'REC-TDG-2026-3C4D5E'
-    }
-  },
-  {
-    method: 'POST',
-    path: '/api/payments/payu/verify',
-    title: 'Live PayU verify_payment Reconciliation',
-    description:
-      'Calls official PayU postservice.php?form=2 (command=verify_payment) server-side to reconcile pending or under-review transactions. Accessible only to the owning applicant or an authorized administrator.',
-    authNote: 'Requires Authorization: Bearer <FIREBASE_ID_TOKEN> (Owner or Admin)',
-    sampleRequest: { txnid: 'TDG1A2B3C4D5E' },
-    sampleResponse: {
-      ok: true,
-      finalStatus: 'SUCCESS',
-      message: 'Reconciled transaction with PayU: status is SUCCESS.'
-    }
-  },
-  {
     method: 'GET',
     path: '/api/admin/payments',
-    title: 'Admin Payment Ledger, Stats & Refund Controls',
+    title: 'Admin Razorpay Payment Ledger, Stats & Refund Controls',
     description:
-      'Returns authoritative server payment counts, verified INR collections, PayU transaction list, and webhook audit events. POST supports action: "reconcile", "mark_refund_pending", and "mark_refunded".',
+      'Returns authoritative server Razorpay payment counts, captured INR collections, order/payment list, and webhook audit events. POST supports action: "reconcile_razorpay", "refund_razorpay", and "update_notes_razorpay".',
     authNote: 'Strictly Administrator Firebase ID Token required (403 for applicants)',
     sampleResponse: {
       ok: true,
-      stats: {
-        totalTransactions: 12,
+      razorpayStats: {
+        totalOrders: 12,
         pendingCount: 2,
-        successCount: 9,
+        capturedCount: 9,
         failedCount: 1,
-        totalVerifiedCollectionsINR: 124990
+        refundedCount: 0,
+        totalCapturedCollectionsINR: 124990
       }
     }
   },
@@ -209,16 +145,16 @@ const ENDPOINTS: EndpointDoc[] = [
   {
     method: 'GET',
     path: '/api/health',
-    title: 'Service Health & PayU Configuration Status',
+    title: 'Service Health & Razorpay Configuration Status',
     description:
-      'Returns server availability, CRM/SendGrid configuration flags (boolean only, zero secrets), and PayU Classic Hosted Checkout environment status.',
+      'Returns server availability, CRM/SendGrid configuration flags (boolean only, zero secrets), and Razorpay Standard Checkout readiness status.',
     authNote: 'Public health probe (zero secrets exposed)',
     sampleResponse: {
       status: 'healthy',
-      paymentGateway: {
-        provider: 'payu_classic_hosted',
-        env: 'test',
-        configured: false
+      razorpay: {
+        provider: 'razorpay_standard_checkout',
+        mode: 'live',
+        configured: true
       }
     }
   }
@@ -245,7 +181,7 @@ export function ApiDocsView({ currentUser, onSignInGoogle }: ApiDocsViewProps) {
             Internal API Documentation Restricted
           </h2>
           <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto leading-relaxed">
-            Server architecture, PayU webhook specifications, and administrative endpoints are restricted to authorized
+            Server architecture, Razorpay webhook specifications, and administrative endpoints are restricted to authorized
             TRUEDEAL GLOBAL administrators.
           </p>
         </div>
@@ -329,23 +265,21 @@ print(response.json())`;
           <span>TRUEDEAL GLOBAL OPC PVT LTD · Restricted Administrator API Reference</span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100">
-          Razorpay Standard Checkout, PayU &amp; Portal Server APIs
+          Razorpay Standard Checkout &amp; Portal Server APIs
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-3xl">
           Authoritative server-side endpoints deployed on{' '}
           <code className="font-mono text-indigo-600 dark:text-indigo-400">{CANONICAL_BASE}</code>. All Razorpay key
-          secrets, webhook secrets, PayU salts, CRM keys, and SendGrid credentials remain strictly in server environment
-          variables.
+          secrets, webhook secrets, CRM keys, and SendGrid credentials remain strictly in server environment variables.
         </p>
       </div>
 
       <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-start gap-3 text-xs text-emerald-900 dark:text-emerald-200">
         <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
         <div>
-          <strong>Zero Exposed Secrets:</strong> No Razorpay Key Secret, Razorpay Webhook Secret, PayU Salt, CRM keys,
-          or SendGrid API keys are embedded in frontend bundles. All sensitive endpoints cryptographically verify
-          Firebase ID tokens via{' '}
-          <code className="font-mono">Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;</code>.
+          <strong>Zero Exposed Secrets:</strong> No Razorpay Key Secret, Razorpay Webhook Secret, CRM keys, or SendGrid
+          API keys are embedded in frontend bundles. All sensitive endpoints cryptographically verify Firebase ID tokens
+          via <code className="font-mono">Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;</code>.
         </div>
       </div>
 

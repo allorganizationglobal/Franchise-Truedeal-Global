@@ -14,7 +14,7 @@ import {
 import { User as FirebaseUser } from 'firebase/auth';
 import { getFirebaseIdToken } from '../../services/firebase';
 import { FranchiseStorageService } from '../../services/storage';
-import { PayUPaymentStatus, PaymentRecord } from '../../types/franchise';
+import { RazorpayPaymentStatus, PaymentRecord } from '../../types/franchise';
 import { PaymentModal } from '../common/PaymentModal';
 
 interface PaymentResultViewProps {
@@ -25,27 +25,29 @@ interface PaymentResultViewProps {
   onRefresh: () => void;
 }
 
-interface VerifiedPaymentPayload {
-  paymentId: string;
+interface VerifiedRazorpayPayload {
+  paymentRecordId: string;
   applicationId: string;
   userId: string;
   applicantName: string;
   email: string;
-  franchisePlanId: string;
-  franchisePlanName: string;
-  txnId: string;
-  payuTransactionId?: string;
-  amount: number;
-  formattedAmount: string;
+  planId: string;
+  planName: string;
+  razorpayOrderId: string;
+  razorpayPaymentId?: string;
+  finalAmountINR: number;
+  baseAmountINR: number;
+  gstAmountINR: number;
   currency: 'INR';
-  paymentStatus: PayUPaymentStatus;
-  paymentMethod?: string;
-  bankRefNum?: string;
+  paymentStatus: RazorpayPaymentStatus;
+  paymentMethodDetails?: string;
   receiptNumber?: string;
-  errorMessage?: string;
-  verifiedAt?: string;
+  failureReason?: string;
+  paymentTimestamp?: string;
   createdAt: string;
   updatedAt: string;
+  signatureVerified?: boolean;
+  captureStatus?: PaymentRecord['captureStatus'];
 }
 
 export function PaymentResultView({
@@ -56,77 +58,69 @@ export function PaymentResultView({
   onRefresh
 }: PaymentResultViewProps) {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const txnid = params.get('txnid') || '';
+  const orderId = params.get('orderId') || params.get('razorpay_order_id') || params.get('txnid') || '';
   const applicationIdParam = params.get('applicationId') || '';
   const reasonParam = params.get('reason') || '';
 
   const [loading, setLoading] = useState(true);
-  const [verifying, setVerifying] = useState(false);
-  const [payment, setPayment] = useState<VerifiedPaymentPayload | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [payment, setPayment] = useState<VerifiedRazorpayPayload | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showRetryModal, setShowRetryModal] = useState(false);
 
   const complianceConfig = FranchiseStorageService.getComplianceConfig();
 
   const syncVerifiedPaymentToLocalApp = useCallback(
-    (p: VerifiedPaymentPayload) => {
+    (p: VerifiedRazorpayPayload) => {
       const apps = FranchiseStorageService.getApplications();
       const target = apps.find((a) => a.id === p.applicationId);
       if (!target) return;
 
       const mappedStatus: PaymentRecord['status'] =
-        p.paymentStatus === 'SUCCESS'
+        p.paymentStatus === 'CAPTURED'
           ? 'completed'
-          : p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED' || p.paymentStatus === 'EXPIRED'
+          : p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED'
           ? 'failed'
+          : p.paymentStatus === 'REFUNDED' || p.paymentStatus === 'REFUND_INITIATED'
+          ? 'refunded'
           : 'processing';
 
-      const existingIdx = target.payments.findIndex((x) => x.txnId === p.txnId || x.referenceCode === p.txnId);
       const updatedPay: PaymentRecord = {
-        id: p.paymentId,
+        id: p.paymentRecordId || `rzp_${p.razorpayOrderId}`,
         applicationId: p.applicationId,
         type: 'franchise_deposit',
-        amount: p.amount,
+        amount: p.finalAmountINR,
         currency: 'INR',
-        method: 'payu_hosted',
+        method: 'razorpay',
+        gateway: 'razorpay',
         status: mappedStatus,
         payuStatus: p.paymentStatus,
-        txnId: p.txnId,
-        payuTransactionId: p.payuTransactionId,
-        paymentMethod: p.paymentMethod,
-        verifiedAt: p.verifiedAt,
-        transactionHash: p.payuTransactionId || p.txnId,
-        referenceCode: p.txnId,
-        timestamp: p.verifiedAt || p.updatedAt || p.createdAt,
-        receiptNumber: p.receiptNumber || 'PENDING-VERIFICATION',
+        razorpayOrderId: p.razorpayOrderId,
+        razorpayPaymentId: p.razorpayPaymentId,
+        txnId: p.razorpayOrderId,
+        transactionHash: p.razorpayPaymentId || p.razorpayOrderId,
+        referenceCode: p.razorpayPaymentId || p.razorpayOrderId,
+        timestamp: p.paymentTimestamp || p.updatedAt || p.createdAt,
+        receiptNumber: p.receiptNumber || 'PENDING-RAZORPAY-VERIFICATION',
         billingName: p.applicantName,
-        totalWithGst: p.amount
+        baseAmount: p.baseAmountINR,
+        gstAmount: p.gstAmountINR,
+        totalWithGst: p.finalAmountINR,
+        signatureVerified: Boolean(p.signatureVerified),
+        captureStatus: p.captureStatus,
+        paymentMethodDetails: p.paymentMethodDetails,
+        failureReason: p.failureReason
       };
 
-      const updatedPayments = [...target.payments];
-      if (existingIdx >= 0) {
-        updatedPayments[existingIdx] = updatedPay;
-      } else {
-        updatedPayments.push(updatedPay);
-      }
-
-      target.payments = updatedPayments;
-      target.paymentStatus = p.paymentStatus;
-      target.txnId = p.txnId;
-      target.payuTransactionId = p.payuTransactionId;
-      if (p.paymentStatus === 'SUCCESS' && (target.status === 'PAYMENT_PENDING' || target.status === 'draft')) {
-        target.status = 'submitted';
-      }
-      target.updatedAt = new Date().toISOString();
-      FranchiseStorageService.saveApplication(target);
+      FranchiseStorageService.addPayment(p.applicationId, updatedPay);
       onRefresh();
     },
     [onRefresh]
   );
 
-  const fetchAuthoritativeStatus = useCallback(async () => {
-    if (!txnid) {
-      setErrorMsg('No PayU transaction ID was provided in the return URL.');
+  const fetchAuthoritativeStatus = useCallback(async (isManualRefresh = false) => {
+    if (!orderId && !applicationIdParam) {
+      setErrorMsg('No Razorpay Order ID or Application ID was provided in the URL.');
       setLoading(false);
       return;
     }
@@ -136,78 +130,56 @@ export function PaymentResultView({
       return;
     }
 
-    setLoading(true);
+    if (isManualRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setErrorMsg(null);
+
     try {
       const idToken = await getFirebaseIdToken();
       if (!idToken) {
-        setErrorMsg('Please sign in to fetch your verified payment status.');
-        setLoading(false);
+        setErrorMsg('Please sign in to fetch your verified Razorpay payment status.');
         return;
       }
 
-      const res = await fetch(`/api/payments/payu/status?txnid=${encodeURIComponent(txnid)}`, {
+      const query = orderId
+        ? `orderId=${encodeURIComponent(orderId)}`
+        : `applicationId=${encodeURIComponent(applicationIdParam)}`;
+      const res = await fetch(`/api/payments/razorpay/status?${query}`, {
         headers: { Authorization: `Bearer ${idToken}` }
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (!res.ok || !data?.ok || !data?.payment) {
-        setErrorMsg(data?.message || 'Unable to verify payment record from server.');
+      const resolvedPayment: VerifiedRazorpayPayload | null =
+        data?.payment || (Array.isArray(data?.payments) && data.payments.length > 0 ? data.payments[0] : null);
+
+      if (!res.ok || !data?.ok || !resolvedPayment) {
+        setErrorMsg(data?.message || 'Unable to verify Razorpay payment record from server.');
         setPayment(null);
       } else {
-        setPayment(data.payment);
-        syncVerifiedPaymentToLocalApp(data.payment);
+        setPayment(resolvedPayment);
+        syncVerifiedPaymentToLocalApp(resolvedPayment);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Network error while verifying payment status.');
+      setErrorMsg(err?.message || 'Network error while verifying Razorpay payment status.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [txnid, currentUser, syncVerifiedPaymentToLocalApp]);
+  }, [orderId, applicationIdParam, currentUser, syncVerifiedPaymentToLocalApp]);
 
   useEffect(() => {
-    fetchAuthoritativeStatus();
+    fetchAuthoritativeStatus(false);
   }, [fetchAuthoritativeStatus]);
-
-  const handleManualReconcile = async () => {
-    if (!txnid || !currentUser) return;
-    setVerifying(true);
-    setErrorMsg(null);
-    try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) return;
-      const res = await fetch('/api/payments/payu/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ txnid })
-      });
-      const data = await res.json();
-      if (data?.payment) {
-        setPayment(data.payment);
-        syncVerifiedPaymentToLocalApp(data.payment);
-      }
-      if (!data?.ok) {
-        setErrorMsg(data?.message || 'PayU verify_payment API could not confirm transaction yet.');
-      }
-    } catch (err: any) {
-      setErrorMsg(err?.message || 'Could not contact PayU verification endpoint.');
-    } finally {
-      setVerifying(false);
-    }
-  };
 
   const linkedApp = FranchiseStorageService.getApplications().find(
     (a) => a.id === (payment?.applicationId || applicationIdParam)
   );
 
-  const isSuccess = payment?.paymentStatus === 'SUCCESS';
-  const isFailed =
-    payment?.paymentStatus === 'FAILED' ||
-    payment?.paymentStatus === 'CANCELLED' ||
-    payment?.paymentStatus === 'EXPIRED';
+  const isSuccess = payment?.paymentStatus === 'CAPTURED';
+  const isFailed = payment?.paymentStatus === 'FAILED' || payment?.paymentStatus === 'CANCELLED';
 
   return (
     <div className="max-w-2xl mx-auto py-12 px-4 sm:px-6 space-y-6">
@@ -218,12 +190,12 @@ export function PaymentResultView({
               <ShieldCheck className="w-7 h-7" />
             </div>
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-              Sign In to Verify Your PayU Payment Status
+              Sign In to Verify Your Razorpay Payment Status
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
               For your security, TRUEDEAL GLOBAL never trusts URL query parameters as proof of payment. Sign in with your
               applicant Google account to load the server-verified transaction status for{' '}
-              <code className="font-mono font-bold text-slate-800 dark:text-slate-200">{txnid || 'your order'}</code>.
+              <code className="font-mono font-bold text-slate-800 dark:text-slate-200">{orderId || applicationIdParam || 'your order'}</code>.
             </p>
             {onSignInGoogle && (
               <button
@@ -240,9 +212,9 @@ export function PaymentResultView({
           <div className="text-center py-10 space-y-3">
             <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
             <h2 className="text-base font-bold text-slate-900 dark:text-white">
-              Verifying Transaction with Server &amp; PayU...
+              Verifying Transaction with Server &amp; Razorpay...
             </h2>
-            <p className="text-xs text-slate-500">Checking cryptographic signature and authoritative settlement status.</p>
+            <p className="text-xs text-slate-500">Checking cryptographic signature and authoritative capture status.</p>
           </div>
         ) : (
           <>
@@ -265,17 +237,17 @@ export function PaymentResultView({
               <div>
                 <h1 className="text-2xl font-black text-slate-900 dark:text-white">
                   {isSuccess
-                    ? 'Payment Verified & Confirmed'
+                    ? 'Payment Verified & Captured'
                     : isFailed
                     ? `Payment ${payment?.paymentStatus || 'Failed'}`
                     : 'Payment Verification Pending'}
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   {isSuccess
-                    ? 'Your franchise fee payment has been independently verified via PayU India.'
+                    ? 'Your franchise fee payment has been independently verified & captured via Razorpay.'
                     : isFailed
-                    ? payment?.errorMessage || 'Your PayU transaction did not complete. No duplicate charge will be made if you retry safely.'
-                    : 'We are awaiting final confirmation from PayU. You can re-check live status below.'}
+                    ? payment?.failureReason || 'Your Razorpay transaction did not complete. You can safely retry below.'
+                    : 'We are awaiting final capture confirmation from Razorpay. Refresh live status below.'}
                 </p>
               </div>
             </div>
@@ -319,35 +291,35 @@ export function PaymentResultView({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Franchise Plan</span>
-                  <span className="font-semibold text-slate-900 dark:text-white">{payment.franchisePlanName}</span>
+                  <span className="font-semibold text-slate-900 dark:text-white">{payment.planName}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Amount Paid</span>
+                  <span className="text-slate-500">Amount</span>
                   <span className="font-mono font-bold text-slate-900 dark:text-white">
-                    ₹{payment.amount.toLocaleString('en-IN')} INR
+                    ₹{payment.finalAmountINR.toLocaleString('en-IN')} INR
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Merchant Txn ID</span>
-                  <span className="font-mono text-slate-800 dark:text-slate-200">{payment.txnId}</span>
+                  <span className="text-slate-500">Razorpay Order ID</span>
+                  <span className="font-mono text-slate-800 dark:text-slate-200">{payment.razorpayOrderId}</span>
                 </div>
-                {payment.payuTransactionId && (
+                {payment.razorpayPaymentId && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">PayU Reference (mihpayid)</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">{payment.payuTransactionId}</span>
+                    <span className="text-slate-500">Razorpay Payment ID</span>
+                    <span className="font-mono text-slate-800 dark:text-slate-200">{payment.razorpayPaymentId}</span>
                   </div>
                 )}
-                {payment.paymentMethod && (
+                {payment.paymentMethodDetails && (
                   <div className="flex justify-between">
                     <span className="text-slate-500">Payment Mode</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{payment.paymentMethod}</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{payment.paymentMethodDetails}</span>
                   </div>
                 )}
-                {payment.verifiedAt && (
+                {payment.paymentTimestamp && (
                   <div className="flex justify-between">
                     <span className="text-slate-500">Verified Timestamp</span>
                     <span className="text-slate-800 dark:text-slate-200">
-                      {new Date(payment.verifiedAt).toLocaleString('en-IN')}
+                      {new Date(payment.paymentTimestamp).toLocaleString('en-IN')}
                     </span>
                   </div>
                 )}
@@ -367,15 +339,15 @@ export function PaymentResultView({
                 </button>
               )}
 
-              {!isSuccess && txnid && (
+              {!isSuccess && (orderId || applicationIdParam) && (
                 <button
                   type="button"
-                  disabled={verifying}
-                  onClick={handleManualReconcile}
+                  disabled={refreshing}
+                  onClick={() => fetchAuthoritativeStatus(true)}
                   className="px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-4 h-4 ${verifying ? 'animate-spin' : ''}`} />
-                  <span>{verifying ? 'Checking PayU...' : 'Verify Payment Status with PayU'}</span>
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+                  <span>{refreshing ? 'Checking Razorpay...' : 'Refresh Razorpay Payment Status'}</span>
                 </button>
               )}
 
@@ -416,7 +388,7 @@ export function PaymentResultView({
           onClose={() => setShowRetryModal(false)}
           application={linkedApp}
           paymentType="franchise_deposit"
-          amount={payment?.amount || linkedApp.amount || 4999}
+          amount={payment?.finalAmountINR || linkedApp.amount || 4999}
           currency="INR"
           currentUser={currentUser}
           onSignInGoogle={onSignInGoogle}

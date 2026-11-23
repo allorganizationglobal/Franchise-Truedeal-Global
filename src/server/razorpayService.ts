@@ -287,11 +287,21 @@ function checkRateLimit(
 // Configuration & Cryptographic Primitives
 // =========================================================================
 export function getRazorpayConfigStatus(): RazorpayConfigStatus {
-  const rawMode = (process.env.RAZORPAY_MODE || 'test').toLowerCase().trim();
-  const mode: 'test' | 'live' = rawMode === 'live' ? 'live' : 'test';
   const keyId = (process.env.RAZORPAY_KEY_ID || '').trim();
   const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
   const webhookSecret = (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim();
+
+  // Auto-detect 'live' vs 'test' from RAZORPAY_KEY_ID prefix when RAZORPAY_MODE is omitted,
+  // while preserving strict mismatch protection when RAZORPAY_MODE is explicitly configured.
+  const explicitMode = (process.env.RAZORPAY_MODE || '').toLowerCase().trim();
+  const mode: 'test' | 'live' =
+    explicitMode === 'live'
+      ? 'live'
+      : explicitMode === 'test'
+      ? 'test'
+      : keyId.startsWith('rzp_live_')
+      ? 'live'
+      : 'test';
 
   const missingEnvVars: string[] = [];
   if (!keyId) missingEnvVars.push('RAZORPAY_KEY_ID');

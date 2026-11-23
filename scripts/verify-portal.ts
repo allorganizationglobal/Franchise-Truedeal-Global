@@ -131,8 +131,11 @@ assert(
   'PAYMENTS'
 );
 assert(
-  paymentSource.includes('PayU Hosted Checkout') && paymentSource.includes('/api/payments/payu/initiate'),
-  'PayU Hosted Checkout initiates orders strictly through server-side /api/payments/payu/initiate',
+  paymentSource.includes('Razorpay Standard Web Checkout') &&
+    paymentSource.includes('/api/create-order') &&
+    paymentSource.includes('/api/verify-payment') &&
+    !paymentSource.includes('/api/payments/payu/initiate'),
+  'Razorpay Standard Web Checkout initiates & verifies orders strictly server-side with zero PayU checkout UI',
   'PAYMENTS'
 );
 

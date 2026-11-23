@@ -123,7 +123,7 @@ export function handleFirestoreError(
 
 /**
  * Returns a fresh Firebase Auth ID token for authenticating server-side API calls
- * (e.g., PayU initiation, status verification, admin payment reconciliation).
+ * (e.g., Razorpay order creation, payment verification, admin payment reconciliation).
  */
 export async function getFirebaseIdToken(forceRefresh = false): Promise<string | null> {
   if (!auth.currentUser) return null;
@@ -197,10 +197,10 @@ export const firestoreInfo = {
   storageBucket: firebaseConfig.storageBucket,
   collections: [
     { name: 'franchise_applications', desc: 'Authorized Franchise Partner Applications' },
-    { name: 'franchise_payments', desc: 'Server-Verified PayU Payment Ledger' },
+    { name: 'franchise_payments', desc: 'Server-Verified Razorpay Payment Ledger' },
     { name: 'franchise_plans', desc: 'Published Franchise Plan Catalog' },
     { name: 'franchise_documents', desc: 'Private KYC Document Metadata' },
-    { name: 'payment_webhook_events', desc: 'Idempotent PayU Webhook Event Logs' },
+    { name: 'payment_webhook_events', desc: 'Idempotent Razorpay Webhook Event Logs' },
     { name: 'admin_audit_logs', desc: 'Immutable Security & Payment Audit Logs' },
     { name: 'applications', desc: 'Legacy Franchise Applications Collection' },
     { name: 'audit_logs', desc: 'Legacy Security Audit Logs' },

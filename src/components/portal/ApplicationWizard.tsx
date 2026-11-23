@@ -358,7 +358,7 @@ export function ApplicationWizard({
       preferredStartDate,
       operationalExperienceYears,
       businessBackgroundSummary: businessBackgroundSummary.trim(),
-      // Enters PAYMENT_PENDING (awaiting PayU verification or manual bank reconciliation)
+      // Enters PAYMENT_PENDING (awaiting Razorpay capture verification or manual bank reconciliation)
       status: paymentRecord ? 'submitted' : 'PAYMENT_PENDING',
       automatedEvaluation: finalScore,
       documents,
@@ -1499,7 +1499,7 @@ export function ApplicationWizard({
         </div>
       )}
 
-      {/* Embedded Payment Modal for PayU Hosted Checkout or Corporate Bank Reference */}
+      {/* Embedded Payment Modal for Razorpay Standard Checkout or Corporate Bank Reference */}
       {showPaymentModal && (
         <PaymentModal
           isOpen={showPaymentModal}
