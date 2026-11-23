@@ -118,14 +118,30 @@ export interface ContactInquiry {
 
 export type PayUPaymentStatus =
   | 'CREATED'
+  | 'PENDING'
   | 'PAYMENT_PENDING'
+  | 'AUTHORIZED'
+  | 'CAPTURED'
   | 'SUCCESS'
   | 'FAILED'
   | 'CANCELLED'
   | 'EXPIRED'
+  | 'REFUND_INITIATED'
   | 'REFUND_PENDING'
   | 'REFUNDED'
+  | 'VERIFICATION_REQUIRED'
   | 'UNDER_REVIEW';
+
+export type RazorpayPaymentStatus =
+  | 'CREATED'
+  | 'PENDING'
+  | 'AUTHORIZED'
+  | 'CAPTURED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'REFUND_INITIATED'
+  | 'REFUNDED'
+  | 'VERIFICATION_REQUIRED';
 
 export type ApplicationStatus =
   | 'draft'
@@ -195,13 +211,25 @@ export interface PaymentRecord {
   applicationId: string;
   type: 'application_fee' | 'franchise_deposit';
   amount: number;
+  baseAmount?: number;
+  baseAmountINR?: number;
   currency: string;
-  method: 'payu_hosted' | 'card' | 'ach' | 'escrow_wire' | 'upi_bank_transfer' | 'razorpay_pending';
-  status: 'completed' | 'processing' | 'failed';
+  method: 'razorpay' | 'payu_hosted' | 'card' | 'ach' | 'escrow_wire' | 'upi_bank_transfer' | 'razorpay_pending';
+  gateway?: 'razorpay' | 'payu' | 'bank_transfer';
+  status: 'completed' | 'processing' | 'failed' | 'refunded';
   payuStatus?: PayUPaymentStatus;
+  razorpayStatus?: RazorpayPaymentStatus;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
+  signatureVerified?: boolean;
+  captureStatus?: 'unpaid' | 'authorized' | 'captured' | 'failed' | 'refunded';
+  refundStatus?: 'none' | 'initiated' | 'processed' | 'failed';
+  refundId?: string;
+  failureReason?: string;
   txnId?: string;
   payuTransactionId?: string;
   paymentMethod?: string;
+  paymentMethodDetails?: string;
   verifiedAt?: string;
   gatewayResponseSummary?: string;
   transactionHash: string;
@@ -271,6 +299,8 @@ export interface FranchiseApplication {
   paymentId?: string;
   txnId?: string;
   payuTransactionId?: string;
+  razorpayOrderId?: string;
+  razorpayPaymentId?: string;
   territoryRequested: string;
   preferredStartDate: string;
   operationalExperienceYears: number;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Building2,
   ShieldCheck,
@@ -14,15 +14,23 @@ import {
   CreditCard,
   ExternalLink,
   Loader2,
-  LogIn
+  LogIn,
+  CheckCircle2,
+  RefreshCw,
+  XCircle
 } from 'lucide-react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { FranchiseApplication, PaymentRecord, Currency } from '../../types/franchise';
+import { FranchiseApplication, PaymentRecord, Currency, RazorpayPaymentStatus } from '../../types/franchise';
 import { FranchiseStorageService, getPlanById } from '../../services/storage';
 import { calculateFeeBreakdownINR } from '../../config/complianceConfig';
 import { NotificationService } from '../../services/notificationService';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import { getFirebaseIdToken } from '../../services/firebase';
+import {
+  loadRazorpayCheckoutScript,
+  RazorpayCheckoutFailedEvent,
+  RazorpayCheckoutSuccessResponse
+} from '../../utils/razorpayCheckout';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -44,6 +52,26 @@ interface PayUStatusConfig {
   missingEnvVars?: string[];
 }
 
+interface RazorpayStatusConfig {
+  configured: boolean;
+  mode: 'test' | 'live';
+  publicKeyId: string | null;
+  keyModeMismatch: boolean;
+  missingEnvVars: string[];
+  gstMode: 'excluded' | 'included' | 'not_applicable';
+  gstRatePercent: number;
+}
+
+type RazorpayFlowBanner =
+  | null
+  | {
+      state: 'creating_order' | 'checkout_open' | 'verifying' | 'pending_verification' | 'failed' | 'cancelled' | 'already_paid';
+      title: string;
+      message: string;
+      orderId?: string;
+      paymentId?: string;
+    };
+
 export function PaymentModal({
   isOpen,
   onClose,
@@ -60,13 +88,26 @@ export function PaymentModal({
   const plan = getPlanById(application.planId);
   const feeBreakdown = calculateFeeBreakdownINR(amount, config);
 
-  const [activeMode, setActiveMode] = useState<'payu_hosted' | 'bank_upi'>('payu_hosted');
+  const [activeMode, setActiveMode] = useState<'razorpay' | 'payu_hosted' | 'bank_upi'>('razorpay');
+
+  // Razorpay Standard Checkout state
+  const [rzpConfig, setRzpConfig] = useState<RazorpayStatusConfig | null>(null);
+  const [loadingRzpConfig, setLoadingRzpConfig] = useState(false);
+  const [rzpPolicyAccepted, setRzpPolicyAccepted] = useState(false);
+  const [rzpBusy, setRzpBusy] = useState(false);
+  const [rzpBanner, setRzpBanner] = useState<RazorpayFlowBanner>(null);
+  const [verifiedRazorpayPayment, setVerifiedRazorpayPayment] = useState<PaymentRecord | null>(null);
+  const [hasFailedOrCancelledAttempt, setHasFailedOrCancelledAttempt] = useState(false);
+  const rzpClickLockRef = useRef(false);
+
+  // PayU Classic Hosted Checkout state (preserved)
   const [payuConfig, setPayuConfig] = useState<PayUStatusConfig | null>(null);
   const [loadingPayuConfig, setLoadingPayuConfig] = useState(false);
   const [initiatingPayu, setInitiatingPayu] = useState(false);
   const [payuError, setPayuError] = useState<string | null>(null);
   const [payuPolicyAccepted, setPayuPolicyAccepted] = useState(false);
 
+  // Corporate Bank / UPI Transfer state (preserved)
   const [selectedQrTab, setSelectedQrTab] = useState<'bob' | 'idbi'>('bob');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [utrNumber, setUtrNumber] = useState<string>('');
@@ -79,7 +120,31 @@ export function PaymentModal({
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
+    setLoadingRzpConfig(true);
     setLoadingPayuConfig(true);
+
+    fetch('/api/payments/razorpay/status?mode=config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && data?.config) {
+          setRzpConfig({
+            configured: Boolean(data.config.configured),
+            mode: data.config.mode === 'live' ? 'live' : 'test',
+            publicKeyId: data.config.publicKeyId || null,
+            keyModeMismatch: Boolean(data.config.keyModeMismatch),
+            missingEnvVars: Array.isArray(data.config.missingEnvVars) ? data.config.missingEnvVars : [],
+            gstMode: data.config.gstMode || 'not_applicable',
+            gstRatePercent: Number(data.config.gstRatePercent || 0)
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setRzpConfig(null);
+      })
+      .finally(() => {
+        if (active) setLoadingRzpConfig(false);
+      });
+
     fetch('/api/payments/payu/status?mode=config')
       .then((res) => res.json())
       .then((data) => {
@@ -98,6 +163,7 @@ export function PaymentModal({
       .finally(() => {
         if (active) setLoadingPayuConfig(false);
       });
+
     return () => {
       active = false;
     };
@@ -113,6 +179,425 @@ export function PaymentModal({
 
   const currencySymbol = currency === 'INR' ? '₹' : '$';
   const totalPayable = currency === 'INR' ? feeBreakdown.totalPayableINR : amount;
+
+  const persistLocalRazorpayAttempt = (
+    orderId: string,
+    status: PaymentRecord['status'],
+    rzpStatus: RazorpayPaymentStatus,
+    details: {
+      paymentId?: string;
+      receiptNumber?: string;
+      amountINR?: number;
+      baseAmountINR?: number;
+      gstAmountINR?: number;
+      signatureVerified?: boolean;
+      captureStatus?: PaymentRecord['captureStatus'];
+      paymentMethodDetails?: string;
+      failureReason?: string;
+      timestamp?: string;
+    } = {}
+  ): PaymentRecord => {
+    const record: PaymentRecord = {
+      id: `rzp_${orderId}`,
+      applicationId: application.id,
+      type: paymentType,
+      amount: details.amountINR ?? feeBreakdown.totalPayableINR,
+      currency: 'INR',
+      method: 'razorpay',
+      gateway: 'razorpay',
+      status,
+      payuStatus: rzpStatus,
+      razorpayOrderId: orderId,
+      razorpayPaymentId: details.paymentId,
+      txnId: orderId,
+      transactionHash: details.paymentId || orderId,
+      referenceCode: details.paymentId || orderId,
+      timestamp: details.timestamp || new Date().toISOString(),
+      receiptNumber: details.receiptNumber || 'PENDING-RAZORPAY-VERIFICATION',
+      billingName: application.applicant.fullName,
+      baseAmount: details.baseAmountINR ?? feeBreakdown.baseFeeINR,
+      gstAmount: details.gstAmountINR ?? feeBreakdown.gstAmountINR,
+      totalWithGst: details.amountINR ?? feeBreakdown.totalPayableINR,
+      signatureVerified: Boolean(details.signatureVerified),
+      captureStatus: details.captureStatus || (status === 'completed' ? 'captured' : status === 'failed' ? 'failed' : 'unpaid'),
+      paymentMethodDetails: details.paymentMethodDetails,
+      failureReason: details.failureReason
+    };
+    FranchiseStorageService.addPayment(application.id, record);
+    return record;
+  };
+
+  const reportClientCheckoutOutcome = async (
+    idToken: string,
+    orderId: string,
+    outcome: 'cancelled' | 'failed',
+    reason: string,
+    paymentId?: string
+  ) => {
+    try {
+      await fetch('/api/payments/razorpay/status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          razorpayOrderId: orderId,
+          outcome,
+          reason,
+          razorpayPaymentId: paymentId
+        })
+      });
+    } catch {
+      // Non-blocking audit report
+    }
+  };
+
+  const handleLaunchRazorpayCheckout = async (forceNewOrder = false) => {
+    if (rzpClickLockRef.current || rzpBusy) return;
+
+    if (!currentUser) {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Sign-In Required',
+        message: 'Please sign in with your Google account first so your Razorpay payment is cryptographically bound to your applicant account.'
+      });
+      return;
+    }
+
+    if (!rzpPolicyAccepted) {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Policy Acceptance Required',
+        message: 'Please confirm that you have reviewed the Refund Policy, Cancellation Policy, and Terms & Conditions before proceeding.'
+      });
+      return;
+    }
+
+    if (!application.id || application.id === 'PENDING') {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Submit Application First',
+        message: 'Please complete Step 6 and submit your franchise application first to generate an official Application Reference ID before paying online.'
+      });
+      return;
+    }
+
+    rzpClickLockRef.current = true;
+    setRzpBusy(true);
+    setRzpBanner({
+      state: 'creating_order',
+      title: 'Creating Verified Razorpay Order...',
+      message: 'Calculating authoritative package fee on the server and creating a secure Razorpay order.'
+    });
+
+    try {
+      const idToken = await getFirebaseIdToken();
+      if (!idToken) {
+        setRzpBanner({
+          state: 'failed',
+          title: 'Session Expired',
+          message: 'Unable to obtain a valid Firebase authentication token. Please sign out and sign in again.'
+        });
+        rzpClickLockRef.current = false;
+        setRzpBusy(false);
+        return;
+      }
+
+      // Step 1: Create authoritative server-side Razorpay order
+      const createRes = await fetch('/api/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          applicationId: application.id,
+          planId: application.planId,
+          paymentPurpose: paymentType,
+          applicantName: application.applicant.fullName,
+          phone: application.applicant.phone,
+          termsAccepted: true,
+          forceNewOrder: forceNewOrder || hasFailedOrCancelledAttempt
+        })
+      });
+
+      const createData = await createRes.json().catch(() => null);
+
+      if (createRes.status === 409 && createData?.error === 'already_paid') {
+        setRzpBanner({
+          state: 'already_paid',
+          title: 'Payment Already Verified',
+          message: createData?.message || 'This franchise application already has a verified captured payment.'
+        });
+        rzpClickLockRef.current = false;
+        setRzpBusy(false);
+        return;
+      }
+
+      if (!createRes.ok || !createData?.ok || !createData?.order?.id) {
+        setRzpBanner({
+          state: 'failed',
+          title: createRes.status === 503 ? 'Razorpay Server Configuration Pending' : 'Order Creation Failed',
+          message:
+            createData?.message ||
+            'Unable to create Razorpay order right now. Please try again or contact support.'
+        });
+        rzpClickLockRef.current = false;
+        setRzpBusy(false);
+        return;
+      }
+
+      const order = createData.order;
+      const pricing = createData.pricing;
+
+      // Record created order in local tracker history immediately
+      persistLocalRazorpayAttempt(order.id, 'processing', 'CREATED', {
+        amountINR: pricing?.finalAmountINR ?? feeBreakdown.totalPayableINR,
+        baseAmountINR: pricing?.baseAmountINR ?? feeBreakdown.baseFeeINR,
+        gstAmountINR: pricing?.gstAmountINR ?? feeBreakdown.gstAmountINR,
+        captureStatus: 'unpaid'
+      });
+
+      // Step 2: Load official checkout.js
+      const scriptLoaded = await loadRazorpayCheckoutScript();
+      if (!scriptLoaded || typeof window.Razorpay !== 'function') {
+        setRzpBanner({
+          state: 'failed',
+          title: 'Razorpay Checkout Script Blocked',
+          message:
+            'Could not load https://checkout.razorpay.com/v1/checkout.js. Please check your internet connection or disable script blockers and retry.',
+          orderId: order.id
+        });
+        rzpClickLockRef.current = false;
+        setRzpBusy(false);
+        return;
+      }
+
+      let handlerInvoked = false;
+      let failedInvoked = false;
+
+      setRzpBanner({
+        state: 'checkout_open',
+        title: 'Razorpay Secure Checkout Open',
+        message: 'Complete your payment inside the Razorpay window. Do not close this browser tab until verification finishes.',
+        orderId: order.id
+      });
+
+      const rzp = new window.Razorpay({
+        key: order.keyId || import.meta.env.VITE_RAZORPAY_KEY_ID || '',
+        amount: order.amount,
+        currency: 'INR',
+        name: order.businessName || 'TRUEDEAL GLOBAL OPC PVT LTD',
+        description: order.description || `${plan?.title || application.planId} — #${application.id}`,
+        order_id: order.id,
+        prefill: {
+          name: order.prefill?.name || application.applicant.fullName,
+          email: order.prefill?.email || application.applicant.email,
+          contact: order.prefill?.contact || application.applicant.phone
+        },
+        notes: order.notes || {
+          applicationId: application.id,
+          planId: application.planId
+        },
+        theme: {
+          color: '#4f46e5'
+        },
+        modal: {
+          confirm_close: true,
+          ondismiss: async () => {
+            if (handlerInvoked || failedInvoked) return;
+            setHasFailedOrCancelledAttempt(true);
+            persistLocalRazorpayAttempt(order.id, 'failed', 'CANCELLED', {
+              amountINR: pricing?.finalAmountINR,
+              baseAmountINR: pricing?.baseAmountINR,
+              gstAmountINR: pricing?.gstAmountINR,
+              captureStatus: 'unpaid',
+              failureReason: 'Payment checkout closed before completion.'
+            });
+            await reportClientCheckoutOutcome(
+              idToken,
+              order.id,
+              'cancelled',
+              'Customer dismissed Razorpay Standard Checkout modal.'
+            );
+            setRzpBanner({
+              state: 'cancelled',
+              title: 'Payment Cancelled',
+              message: 'You closed the Razorpay checkout window before completing payment. No confirmed payment was recorded. You can safely retry.',
+              orderId: order.id
+            });
+            rzpClickLockRef.current = false;
+            setRzpBusy(false);
+          }
+        },
+        handler: async (response: RazorpayCheckoutSuccessResponse) => {
+          handlerInvoked = true;
+          setRzpBanner({
+            state: 'verifying',
+            title: 'Verifying Payment with Server...',
+            message: 'Validating cryptographic HMAC-SHA256 signature and confirming payment capture with Razorpay.',
+            orderId: order.id,
+            paymentId: response.razorpay_payment_id
+          });
+
+          try {
+            const verifyRes = await fetch('/api/verify-payment', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+                applicationId: application.id
+              })
+            });
+
+            const verifyData = await verifyRes.json().catch(() => null);
+
+            // STRICT RULE: Show "Payment Successful" ONLY if backend confirmed verified === true AND captured === true
+            if (verifyRes.ok && verifyData?.verified === true && verifyData?.captured === true && verifyData?.paymentStatus === 'CAPTURED') {
+              const serverRec = verifyData.paymentRecord;
+              const capturedRecord = persistLocalRazorpayAttempt(order.id, 'completed', 'CAPTURED', {
+                paymentId: response.razorpay_payment_id,
+                receiptNumber: serverRec?.receiptNumber || `REC-TDG-${new Date().getFullYear()}-${order.id.slice(-6).toUpperCase()}`,
+                amountINR: serverRec?.finalAmountINR ?? pricing?.finalAmountINR,
+                baseAmountINR: serverRec?.baseAmountINR ?? pricing?.baseAmountINR,
+                gstAmountINR: serverRec?.gstAmountINR ?? pricing?.gstAmountINR,
+                signatureVerified: true,
+                captureStatus: 'captured',
+                paymentMethodDetails: serverRec?.paymentMethodDetails,
+                timestamp: serverRec?.paymentTimestamp || new Date().toISOString()
+              });
+
+              NotificationService.addNotification(
+                `Payment Successful (₹${capturedRecord.amount.toLocaleString('en-IN')} INR)`,
+                `Razorpay Payment ${response.razorpay_payment_id} verified & captured. Receipt: ${capturedRecord.receiptNumber}. Franchise application remains queued for administrative approval.`,
+                'success',
+                application.id
+              );
+
+              playApprovalSuccessSound();
+              setVerifiedRazorpayPayment(capturedRecord);
+              setRzpBanner(null);
+              onPaymentSuccess?.(capturedRecord);
+            } else if (
+              verifyData?.paymentStatus === 'AUTHORIZED' ||
+              verifyData?.paymentStatus === 'VERIFICATION_REQUIRED' ||
+              verifyRes.status === 202 ||
+              verifyRes.status === 502
+            ) {
+              // AUTHORIZED or deferred capture is NEVER shown as Payment Successful
+              const pendingStatus: RazorpayPaymentStatus =
+                verifyData?.paymentStatus === 'AUTHORIZED' ? 'AUTHORIZED' : 'VERIFICATION_REQUIRED';
+              persistLocalRazorpayAttempt(order.id, 'processing', pendingStatus, {
+                paymentId: response.razorpay_payment_id,
+                amountINR: pricing?.finalAmountINR,
+                baseAmountINR: pricing?.baseAmountINR,
+                gstAmountINR: pricing?.gstAmountINR,
+                signatureVerified: Boolean(verifyData?.verified),
+                captureStatus: pendingStatus === 'AUTHORIZED' ? 'authorized' : 'unpaid'
+              });
+
+              setRzpBanner({
+                state: 'pending_verification',
+                title: 'Payment Pending Verification',
+                message:
+                  verifyData?.message ||
+                  'Your payment has been authorized but final capture is still being verified by Razorpay. Please do not pay again — check your Application Tracker shortly.',
+                orderId: order.id,
+                paymentId: response.razorpay_payment_id
+              });
+            } else {
+              setHasFailedOrCancelledAttempt(true);
+              persistLocalRazorpayAttempt(order.id, 'failed', 'FAILED', {
+                paymentId: response.razorpay_payment_id,
+                amountINR: pricing?.finalAmountINR,
+                baseAmountINR: pricing?.baseAmountINR,
+                gstAmountINR: pricing?.gstAmountINR,
+                signatureVerified: false,
+                captureStatus: 'failed',
+                failureReason: verifyData?.message || 'Payment verification failed.'
+              });
+              setRzpBanner({
+                state: 'failed',
+                title: 'Payment Verification Failed',
+                message:
+                  verifyData?.message ||
+                  'Server cryptographic verification did not confirm this payment. Application was NOT marked as paid.',
+                orderId: order.id,
+                paymentId: response.razorpay_payment_id
+              });
+            }
+          } catch {
+            persistLocalRazorpayAttempt(order.id, 'processing', 'VERIFICATION_REQUIRED', {
+              paymentId: response.razorpay_payment_id,
+              amountINR: pricing?.finalAmountINR,
+              baseAmountINR: pricing?.baseAmountINR,
+              gstAmountINR: pricing?.gstAmountINR,
+              captureStatus: 'unpaid',
+              failureReason: 'Network error during server verification.'
+            });
+            setRzpBanner({
+              state: 'pending_verification',
+              title: 'Payment Pending Verification',
+              message:
+                'A network interruption occurred while verifying your payment. If your bank was debited, Razorpay webhooks will reconcile your payment automatically — check your Application Tracker before retrying.',
+              orderId: order.id,
+              paymentId: response.razorpay_payment_id
+            });
+          } finally {
+            rzpClickLockRef.current = false;
+            setRzpBusy(false);
+          }
+        }
+      });
+
+      rzp.on('payment.failed', async (failedEvent: RazorpayCheckoutFailedEvent) => {
+        failedInvoked = true;
+        setHasFailedOrCancelledAttempt(true);
+        const failReason =
+          failedEvent?.error?.description ||
+          failedEvent?.error?.reason ||
+          'Payment failed in Razorpay Checkout.';
+        const failedPaymentId = failedEvent?.error?.metadata?.payment_id;
+
+        persistLocalRazorpayAttempt(order.id, 'failed', 'FAILED', {
+          paymentId: failedPaymentId,
+          amountINR: pricing?.finalAmountINR,
+          baseAmountINR: pricing?.baseAmountINR,
+          gstAmountINR: pricing?.gstAmountINR,
+          captureStatus: 'failed',
+          failureReason: failReason
+        });
+
+        await reportClientCheckoutOutcome(idToken, order.id, 'failed', failReason, failedPaymentId);
+
+        setRzpBanner({
+          state: 'failed',
+          title: 'Payment Failed',
+          message: `${failReason} Your previous attempt has been logged. Click "Retry Payment" to generate a fresh Razorpay order.`,
+          orderId: order.id,
+          paymentId: failedPaymentId
+        });
+        rzpClickLockRef.current = false;
+        setRzpBusy(false);
+      });
+
+      rzp.open();
+    } catch (err: any) {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Payment Initiation Error',
+        message: err?.message || 'Network error while connecting to the server payment endpoint.'
+      });
+      rzpClickLockRef.current = false;
+      setRzpBusy(false);
+    }
+  };
 
   const handleLaunchPayUCheckout = async () => {
     setPayuError(null);
@@ -168,7 +653,6 @@ export function PaymentModal({
         return;
       }
 
-      // Persist initiated PAYMENT_PENDING record locally so tracker reflects it immediately
       if (data.payment?.txnId) {
         const pendingRecord: PaymentRecord = {
           id: data.payment.paymentId || `pay_${data.payment.txnId}`,
@@ -177,6 +661,7 @@ export function PaymentModal({
           amount: data.payment.amount,
           currency: 'INR',
           method: 'payu_hosted',
+          gateway: 'payu',
           status: 'processing',
           payuStatus: 'PAYMENT_PENDING',
           txnId: data.payment.txnId,
@@ -191,7 +676,6 @@ export function PaymentModal({
         FranchiseStorageService.addPayment(application.id, pendingRecord);
       }
 
-      // Dynamically construct and submit official PayU Hosted Checkout POST form
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = data.checkoutUrl;
@@ -245,6 +729,7 @@ export function PaymentModal({
         amount: totalPayable,
         currency,
         method: 'upi_bank_transfer',
+        gateway: 'bank_transfer',
         status: 'processing',
         payuStatus: 'PAYMENT_PENDING',
         transactionHash:
@@ -300,7 +785,94 @@ export function PaymentModal({
           <X className="w-5 h-5" />
         </button>
 
-        {!submittedPayment ? (
+        {verifiedRazorpayPayment ? (
+          /* STRICTLY VERIFIED & CAPTURED RAZORPAY RECEIPT VIEW */
+          <div className="py-2 text-center space-y-5">
+            <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+
+            <div>
+              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100">
+                Payment Successful
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Verified &amp; captured via Razorpay · Receipt #{verifiedRazorpayPayment.receiptNumber}
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2.5 text-xs text-left">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Legal Entity</span>
+                <span className="font-bold text-slate-900 dark:text-slate-100">{config.legalName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Application Reference</span>
+                <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{application.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Franchise Package</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{plan?.title || application.planId}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Verified Paid Amount</span>
+                <span className="font-bold font-mono text-emerald-700 dark:text-emerald-400">
+                  ₹{verifiedRazorpayPayment.amount.toLocaleString('en-IN')} INR
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Razorpay Payment ID</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                  {verifiedRazorpayPayment.razorpayPaymentId}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Razorpay Order ID</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {verifiedRazorpayPayment.razorpayOrderId}
+                </span>
+              </div>
+              {verifiedRazorpayPayment.paymentMethodDetails && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Payment Method</span>
+                  <span className="font-medium text-slate-900 dark:text-slate-100">
+                    {verifiedRazorpayPayment.paymentMethodDetails}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-slate-500">Capture &amp; Signature Status</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">CAPTURED · HMAC Verified</span>
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 text-[11px] text-indigo-900 dark:text-indigo-200 text-left flex items-start gap-2">
+              <Info className="w-4 h-4 shrink-0 mt-0.5 text-indigo-600" />
+              <span>
+                <strong>Important:</strong> Payment confirmation is separate from franchise approval. Your application
+                remains queued for administrative compliance verification and Franchise Agreement execution.
+              </span>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex-1 py-2.5 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" />
+                <span>Print Receipt</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Return to Portal
+              </button>
+            </div>
+          </div>
+        ) : !submittedPayment ? (
           <div className="space-y-5">
             {/* Pre-Payment Summary Header */}
             <div className="pb-4 border-b border-slate-200 dark:border-slate-800 space-y-3">
@@ -349,35 +921,224 @@ export function PaymentModal({
               </div>
             </div>
 
-            {/* Channel Tabs: PayU India Hosted Checkout vs Corporate Bank / UPI */}
-            <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            {/* Channel Tabs: Razorpay Standard Checkout (Primary) | PayU Hosted Checkout | Corporate Bank / UPI */}
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setActiveMode('razorpay')}
+                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                  activeMode === 'razorpay'
+                    ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                <span>Razorpay</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveMode('payu_hosted')}
-                className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeMode === 'payu_hosted'
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                 }`}
               >
-                <CreditCard className="w-3.5 h-3.5" />
+                <CreditCard className="w-3.5 h-3.5 shrink-0" />
                 <span>PayU Hosted Checkout</span>
               </button>
               <button
                 type="button"
                 onClick={() => setActiveMode('bank_upi')}
-                className={`py-2 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeMode === 'bank_upi'
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                 }`}
               >
-                <Building2 className="w-3.5 h-3.5" />
-                <span>Corporate Bank / UPI</span>
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <span>Bank / UPI</span>
               </button>
             </div>
 
-            {activeMode === 'payu_hosted' ? (
+            {activeMode === 'razorpay' ? (
+              <div className="space-y-4">
+                {/* Razorpay Security & Mode Banner */}
+                <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-2 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <span>Razorpay Standard Web Checkout</span>
+                    </span>
+                    {loadingRzpConfig ? (
+                      <span className="text-[10px] font-mono text-slate-500">Checking gateway...</span>
+                    ) : rzpConfig?.configured ? (
+                      <span
+                        className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                          rzpConfig.mode === 'live'
+                            ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                            : 'bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300'
+                        }`}
+                      >
+                        {rzpConfig.mode === 'live' ? 'LIVE READY' : 'TEST MODE READY'}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase">
+                        KEY SECRET NEEDED
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-indigo-900/90 dark:text-indigo-200/90 leading-relaxed">
+                    Pay securely via UPI, Cards, NetBanking, or Wallets using official Razorpay Standard Checkout.
+                    Order amount is calculated strictly on our server, and payment capture is cryptographically verified
+                    via HMAC-SHA256 + Razorpay API before any receipt is issued.
+                  </p>
+                </div>
+
+                {/* Honest Missing Secret Notice */}
+                {!loadingRzpConfig && rzpConfig && !rzpConfig.configured && (
+                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 space-y-2 text-xs text-amber-950 dark:text-amber-200">
+                    <div className="flex items-center gap-2 font-bold">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>
+                        {rzpConfig.keyModeMismatch
+                          ? 'Razorpay Mode / Key Prefix Mismatch'
+                          : 'Razorpay Server Credentials Pending'}
+                      </span>
+                    </div>
+                    <p className="leading-relaxed">
+                      {rzpConfig.keyModeMismatch ? (
+                        <>
+                          Server <code className="font-mono">RAZORPAY_MODE</code> does not match the configured{' '}
+                          <code className="font-mono">RAZORPAY_KEY_ID</code> prefix.
+                        </>
+                      ) : (
+                        <>
+                          Configure <code className="font-mono">RAZORPAY_KEY_ID</code> and your replacement{' '}
+                          <code className="font-mono">RAZORPAY_KEY_SECRET</code> in Vercel Environment Variables to
+                          activate Razorpay Standard Checkout.
+                        </>
+                      )}
+                    </p>
+                  </div>
+                )}
+
+                {/* Authentication Check */}
+                {!currentUser && (
+                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                    <div className="space-y-0.5">
+                      <span className="font-bold text-slate-900 dark:text-white block">
+                        Google Sign-In Required for Online Payment
+                      </span>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        Sign in to bind your Razorpay Order ID and verified payment receipt to your account.
+                      </span>
+                    </div>
+                    {onSignInGoogle && (
+                      <button
+                        type="button"
+                        onClick={onSignInGoogle}
+                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                      >
+                        <LogIn className="w-3.5 h-3.5" />
+                        <span>Sign In</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Status / Error / Pending Verification Banner */}
+                {rzpBanner && (
+                  <div
+                    className={`p-3.5 rounded-xl border text-xs space-y-1.5 ${
+                      rzpBanner.state === 'failed' || rzpBanner.state === 'cancelled'
+                        ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
+                        : rzpBanner.state === 'pending_verification' || rzpBanner.state === 'already_paid'
+                        ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-200'
+                        : 'bg-indigo-50 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-800 text-indigo-900 dark:text-indigo-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 font-bold">
+                      {rzpBanner.state === 'creating_order' || rzpBanner.state === 'verifying' || rzpBanner.state === 'checkout_open' ? (
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                      ) : rzpBanner.state === 'failed' || rzpBanner.state === 'cancelled' ? (
+                        <XCircle className="w-4 h-4 shrink-0" />
+                      ) : (
+                        <Clock className="w-4 h-4 shrink-0" />
+                      )}
+                      <span>{rzpBanner.title}</span>
+                    </div>
+                    <p className="leading-relaxed">{rzpBanner.message}</p>
+                    {(rzpBanner.orderId || rzpBanner.paymentId) && (
+                      <div className="text-[10px] font-mono opacity-80">
+                        {rzpBanner.orderId ? `Order: ${rzpBanner.orderId}` : ''}
+                        {rzpBanner.paymentId ? ` · Payment: ${rzpBanner.paymentId}` : ''}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Policy Acknowledgement */}
+                <label className="flex items-start gap-2.5 text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={rzpPolicyAccepted}
+                    onChange={(e) => setRzpPolicyAccepted(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>
+                    I understand payment confirmation is verified server-side via Razorpay before receipt issuance, that
+                    payment does not auto-approve my franchise application, and I agree to the{' '}
+                    <button type="button" onClick={() => handlePolicyJump('refund')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Refund Policy
+                    </button>
+                    ,{' '}
+                    <button type="button" onClick={() => handlePolicyJump('cancellation')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Cancellation Policy
+                    </button>
+                    , and{' '}
+                    <button type="button" onClick={() => handlePolicyJump('terms')} className="text-indigo-600 dark:text-indigo-400 underline font-semibold cursor-pointer">
+                      Terms &amp; Conditions
+                    </button>
+                    .
+                  </span>
+                </label>
+
+                <button
+                  type="button"
+                  disabled={
+                    rzpBusy ||
+                    !currentUser ||
+                    (rzpConfig !== null && !rzpConfig.configured) ||
+                    rzpBanner?.state === 'already_paid' ||
+                    rzpBanner?.state === 'pending_verification'
+                  }
+                  onClick={() => handleLaunchRazorpayCheckout(hasFailedOrCancelledAttempt)}
+                  className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {rzpBusy ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Processing Secure Razorpay Checkout...</span>
+                    </>
+                  ) : hasFailedOrCancelledAttempt ? (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>
+                        Retry Payment via Razorpay (₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')} INR)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="w-4 h-4" />
+                      <span>
+                        Pay Now via Razorpay (₹{feeBreakdown.totalPayableINR.toLocaleString('en-IN')} INR)
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : activeMode === 'payu_hosted' ? (
               <div className="space-y-4">
                 {/* PayU Security & Environment Banner */}
                 <div className="p-4 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 space-y-2 text-xs">

@@ -55,6 +55,7 @@ export function ApplicantStatusTracker({
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
   const [reconcilingTxnId, setReconcilingTxnId] = useState<string | null>(null);
+  const [syncingRazorpay, setSyncingRazorpay] = useState(false);
   
   // Verification Gate States
   const [unlockEmailOrPhone, setUnlockEmailOrPhone] = useState('');
@@ -115,7 +116,151 @@ export function ApplicantStatusTracker({
 
   const hasVerifiedSuccessPayment =
     currentApp.paymentStatus === 'SUCCESS' ||
-    currentApp.payments.some((p) => p.payuStatus === 'SUCCESS' || p.status === 'completed');
+    currentApp.paymentStatus === 'CAPTURED' ||
+    currentApp.payments.some(
+      (p) => p.payuStatus === 'SUCCESS' || p.payuStatus === 'CAPTURED' || p.status === 'completed'
+    );
+
+  const getCustomerPaymentStatusInfo = (rawStatus?: string, legacyStatus?: PaymentRecord['status']) => {
+    const code = (rawStatus || '').toUpperCase();
+    if (code === 'CAPTURED' || code === 'SUCCESS' || (!code && legacyStatus === 'completed')) {
+      return {
+        label: 'Payment Successful',
+        badgeClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
+        nextStep:
+          'Payment is verified and captured. Franchise approval is reviewed separately by our compliance team — track your application milestones above.',
+        verified: true,
+        canRetry: false
+      };
+    }
+    if (code === 'REFUNDED') {
+      return {
+        label: 'Refund Processed',
+        badgeClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
+        nextStep: 'Your refund has been processed by Razorpay / accounts. Please allow 5–7 business days for bank credit.',
+        verified: false,
+        canRetry: false
+      };
+    }
+    if (code === 'REFUND_INITIATED' || code === 'REFUND_PENDING') {
+      return {
+        label: 'Refund Initiated',
+        badgeClass: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300',
+        nextStep: 'Your refund has been initiated and is being processed.',
+        verified: false,
+        canRetry: false
+      };
+    }
+    if (code === 'CANCELLED') {
+      return {
+        label: 'Payment Cancelled',
+        badgeClass: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
+        nextStep: 'Checkout was closed before completing payment. Click "Retry Payment via Razorpay" when ready.',
+        verified: false,
+        canRetry: true
+      };
+    }
+    if (code === 'FAILED' || code === 'EXPIRED' || (!code && legacyStatus === 'failed')) {
+      return {
+        label: 'Payment Failed',
+        badgeClass: 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300',
+        nextStep: 'Your previous payment attempt did not succeed. Click "Retry Payment via Razorpay" to create a fresh order.',
+        verified: false,
+        canRetry: true
+      };
+    }
+    return {
+      label: 'Payment Pending Verification',
+      badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
+      nextStep:
+        code === 'AUTHORIZED'
+          ? 'Your payment is authorized by the bank and awaiting final capture confirmation. Do not pay twice — click Refresh Payment Status shortly.'
+          : 'Complete your Razorpay payment or wait for verification confirmation if you already paid.',
+      verified: false,
+      canRetry: code !== 'AUTHORIZED' && code !== 'VERIFICATION_REQUIRED'
+    };
+  };
+
+  const handleSyncRazorpayStatus = async () => {
+    if (!currentUser) {
+      NotificationService.addNotification(
+        'Sign-In Required',
+        'Please sign in with Google to fetch live server-verified Razorpay payment status.',
+        'warning'
+      );
+      return;
+    }
+    setSyncingRazorpay(true);
+    try {
+      const idToken = await getFirebaseIdToken();
+      if (!idToken) return;
+      const res = await fetch(
+        `/api/payments/razorpay/status?applicationId=${encodeURIComponent(currentApp.id)}`,
+        { headers: { Authorization: `Bearer ${idToken}` } }
+      );
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok && Array.isArray(data.payments)) {
+        for (const sp of data.payments) {
+          const mappedStatus: PaymentRecord['status'] =
+            sp.paymentStatus === 'CAPTURED'
+              ? 'completed'
+              : sp.paymentStatus === 'FAILED' || sp.paymentStatus === 'CANCELLED'
+              ? 'failed'
+              : sp.paymentStatus === 'REFUNDED' || sp.paymentStatus === 'REFUND_INITIATED'
+              ? 'refunded'
+              : 'processing';
+          FranchiseStorageService.addPayment(currentApp.id, {
+            id: sp.paymentRecordId || `rzp_${sp.razorpayOrderId}`,
+            applicationId: currentApp.id,
+            type: sp.paymentPurpose || 'franchise_deposit',
+            amount: sp.finalAmountINR,
+            currency: 'INR',
+            method: 'razorpay',
+            gateway: 'razorpay',
+            status: mappedStatus,
+            payuStatus: sp.paymentStatus,
+            razorpayOrderId: sp.razorpayOrderId,
+            razorpayPaymentId: sp.razorpayPaymentId,
+            txnId: sp.razorpayOrderId,
+            transactionHash: sp.razorpayPaymentId || sp.razorpayOrderId,
+            referenceCode: sp.razorpayPaymentId || sp.razorpayOrderId,
+            timestamp: sp.paymentTimestamp || sp.updatedAt || sp.createdAt,
+            receiptNumber: sp.receiptNumber || 'PENDING-RAZORPAY-VERIFICATION',
+            billingName: sp.applicantName,
+            baseAmount: sp.baseAmountINR,
+            gstAmount: sp.gstAmountINR,
+            totalWithGst: sp.finalAmountINR,
+            signatureVerified: Boolean(sp.signatureVerified),
+            captureStatus: sp.captureStatus,
+            refundStatus: sp.refundStatus,
+            refundId: sp.refundId,
+            paymentMethodDetails: sp.paymentMethodDetails,
+            failureReason: sp.failureReason
+          });
+        }
+        NotificationService.addNotification(
+          'Payment Status Synced',
+          data.payments.length > 0
+            ? `Synced ${data.payments.length} server-verified Razorpay payment record(s).`
+            : 'No server-side Razorpay orders found yet for this application.',
+          'info',
+          currentApp.id
+        );
+        onRefresh();
+      }
+    } catch {
+      NotificationService.addNotification('Sync Failed', 'Unable to reach Razorpay status endpoint.', 'error');
+    } finally {
+      setSyncingRazorpay(false);
+    }
+  };
+
+  const latestPayment = currentApp.payments.length > 0
+    ? [...currentApp.payments].sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0]
+    : null;
+  const summaryPaymentInfo = latestPayment
+    ? getCustomerPaymentStatusInfo(latestPayment.payuStatus, latestPayment.status)
+    : getCustomerPaymentStatusInfo(currentApp.paymentStatus, undefined);
 
   const handleVerifyPayUTxn = async (txnId: string) => {
     if (!currentUser) {
@@ -824,26 +969,83 @@ export function ApplicantStatusTracker({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                PayU Payment History &amp; Escrow Deposits
+                Razorpay &amp; Franchise Payment Tracker
               </h3>
               <p className="text-xs text-slate-500">
-                Official receipts are issued strictly after server-side PayU verification or corporate bank reconciliation.
+                Official receipts are issued strictly after server-side Razorpay / PayU capture verification or bank reconciliation.
               </p>
             </div>
-            {!hasVerifiedSuccessPayment && (
-              <button
-                type="button"
-                onClick={() => setShowPaymentModal(true)}
-                className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
-              >
-                <CreditCard className="w-3.5 h-3.5" />
-                <span>
-                  {currentApp.payments.some((p) => p.status === 'failed' || p.payuStatus === 'FAILED' || p.payuStatus === 'CANCELLED')
-                    ? 'Retry Payment via PayU'
-                    : 'Pay via PayU Hosted Checkout'}
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              {currentUser && (
+                <button
+                  type="button"
+                  disabled={syncingRazorpay}
+                  onClick={handleSyncRazorpayStatus}
+                  className="py-2 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${syncingRazorpay ? 'animate-spin' : ''}`} />
+                  <span>Refresh Status</span>
+                </button>
+              )}
+              {!hasVerifiedSuccessPayment && (
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(true)}
+                  className="py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>
+                    {currentApp.payments.some(
+                      (p) =>
+                        p.status === 'failed' ||
+                        p.payuStatus === 'FAILED' ||
+                        p.payuStatus === 'CANCELLED'
+                    )
+                      ? 'Retry Payment via Razorpay'
+                      : 'Pay Now via Razorpay'}
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Authoritative Customer Payment & Application Status Summary Card */}
+          <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Application Reference</span>
+              <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{currentApp.id}</span>
+              <span className="text-[11px] text-slate-500 block">{plan.title}</span>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Application Status (Separate)</span>
+              <span className="font-bold text-slate-900 dark:text-slate-100 capitalize">
+                {currentApp.status.replace(/_/g, ' ')}
+              </span>
+              <span className="text-[10px] text-slate-400 block">Reviewed independently by Admin</span>
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Payment Status</span>
+              <span className={`inline-block mt-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${summaryPaymentInfo.badgeClass}`}>
+                {summaryPaymentInfo.label}
+              </span>
+              {latestPayment?.razorpayPaymentId && (
+                <span className="text-[10px] font-mono text-slate-500 block mt-0.5">
+                  ID: {latestPayment.razorpayPaymentId}
                 </span>
-              </button>
-            )}
+              )}
+            </div>
+            <div>
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 block">Package Amount</span>
+              <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
+                ₹{(latestPayment?.amount || plan.priceINR).toLocaleString('en-IN')} INR
+              </span>
+              <span className="text-[10px] text-slate-400 block">
+                {latestPayment ? new Date(latestPayment.timestamp).toLocaleDateString('en-IN') : 'Awaiting payment'}
+              </span>
+            </div>
+            <div className="sm:col-span-2 lg:col-span-4 pt-2 border-t border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300">
+              <strong>Next Steps:</strong> {summaryPaymentInfo.nextStep}
+            </div>
           </div>
 
           {currentApp.payments.length === 0 ? (
@@ -855,19 +1057,13 @@ export function ApplicantStatusTracker({
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold cursor-pointer"
               >
                 <CreditCard className="w-3.5 h-3.5" />
-                <span>Proceed to PayU Payment (₹{plan.priceINR.toLocaleString('en-IN')} INR)</span>
+                <span>Pay Now via Razorpay (₹{plan.priceINR.toLocaleString('en-IN')} INR)</span>
               </button>
             </div>
           ) : (
             <div className="space-y-3">
               {currentApp.payments.map(pay => {
-                const isVerifiedSuccess = pay.payuStatus === 'SUCCESS' || pay.status === 'completed';
-                const isFailedState =
-                  pay.status === 'failed' ||
-                  pay.payuStatus === 'FAILED' ||
-                  pay.payuStatus === 'CANCELLED' ||
-                  pay.payuStatus === 'EXPIRED';
-                const statusLabel = pay.payuStatus || (pay.status === 'completed' ? 'SUCCESS' : pay.status === 'failed' ? 'FAILED' : 'PAYMENT_PENDING');
+                const statusInfo = getCustomerPaymentStatusInfo(pay.payuStatus, pay.status);
                 const sym = pay.currency === 'USD' ? '$' : '₹';
 
                 return (
@@ -878,24 +1074,27 @@ export function ApplicantStatusTracker({
                     <div className="space-y-1">
                       <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 flex-wrap">
                         <span className="capitalize">{pay.type.replace('_', ' ')}</span>
-                        <span
-                          className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
-                            isVerifiedSuccess
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                              : isFailedState
-                              ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
-                              : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                          }`}
-                        >
-                          {statusLabel}
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${statusInfo.badgeClass}`}>
+                          {statusInfo.label}
                         </span>
+                        {pay.payuStatus && (
+                          <span className="text-[10px] font-mono text-slate-400">({pay.payuStatus})</span>
+                        )}
                       </div>
                       <span className="text-[11px] text-slate-500 dark:text-slate-400 font-mono block">
-                        {isVerifiedSuccess ? `Receipt: ${pay.receiptNumber} · ` : ''}
-                        Ref/Txn: {pay.txnId || pay.referenceCode}
+                        {statusInfo.verified ? `Receipt: ${pay.receiptNumber} · ` : ''}
+                        {pay.razorpayPaymentId ? `Razorpay Payment: ${pay.razorpayPaymentId} · ` : ''}
+                        {pay.razorpayOrderId
+                          ? `Order: ${pay.razorpayOrderId}`
+                          : `Ref/Txn: ${pay.txnId || pay.referenceCode}`}
                         {pay.payuTransactionId ? ` · PayU ID: ${pay.payuTransactionId}` : ''} ·{' '}
                         {new Date(pay.timestamp).toLocaleDateString('en-IN')}
                       </span>
+                      {pay.failureReason && !statusInfo.verified && (
+                        <span className="text-[11px] text-rose-600 dark:text-rose-400 block">
+                          {pay.failureReason}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex sm:flex-col items-center sm:items-end justify-between gap-2">
@@ -903,11 +1102,13 @@ export function ApplicantStatusTracker({
                         <span className="text-base font-bold font-mono text-slate-900 dark:text-slate-100 block">
                           {sym}{pay.amount.toLocaleString('en-IN')} {pay.currency}
                         </span>
-                        <span className="text-[11px] text-slate-400 capitalize">{pay.method.replace(/_/g, ' ')}</span>
+                        <span className="text-[11px] text-slate-400 capitalize">
+                          {pay.paymentMethodDetails || pay.method.replace(/_/g, ' ')}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {isVerifiedSuccess && (
+                        {statusInfo.verified && (
                           <button
                             type="button"
                             onClick={() => window.print()}
@@ -917,7 +1118,7 @@ export function ApplicantStatusTracker({
                             <span>Receipt</span>
                           </button>
                         )}
-                        {!isVerifiedSuccess && pay.method === 'payu_hosted' && pay.txnId && (
+                        {!statusInfo.verified && pay.method === 'payu_hosted' && pay.txnId && (
                           <button
                             type="button"
                             disabled={reconcilingTxnId === pay.txnId}

@@ -49,6 +49,12 @@ import { FranchiseStorageService, getPlanById } from '../../services/storage';
 import { NotificationService } from '../../services/notificationService';
 import { BiometricPromptModal } from '../common/BiometricPromptModal';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
+import {
+  RazorpayPaymentsConsole,
+  AdminRazorpayStats,
+  AdminRazorpayPayment,
+  AdminRazorpayWebhookEvent
+} from './RazorpayPaymentsConsole';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
 
@@ -170,6 +176,9 @@ export function AdminDashboard({
   } | null>(null);
   const [payuPayments, setPayuPayments] = useState<any[]>([]);
   const [payuWebhooks, setPayuWebhooks] = useState<any[]>([]);
+  const [razorpayStats, setRazorpayStats] = useState<AdminRazorpayStats | null>(null);
+  const [razorpayPayments, setRazorpayPayments] = useState<AdminRazorpayPayment[]>([]);
+  const [razorpayWebhooks, setRazorpayWebhooks] = useState<AdminRazorpayWebhookEvent[]>([]);
 
   const fetchServerPayULedger = useCallback(async () => {
     if (!currentUser || !isUserAdmin(currentUser.email)) return;
@@ -186,6 +195,9 @@ export function AdminDashboard({
         setPayuStats(data.stats || null);
         setPayuPayments(Array.isArray(data.payments) ? data.payments : []);
         setPayuWebhooks(Array.isArray(data.webhookEvents) ? data.webhookEvents : []);
+        setRazorpayStats(data.razorpayStats || null);
+        setRazorpayPayments(Array.isArray(data.razorpayPayments) ? data.razorpayPayments : []);
+        setRazorpayWebhooks(Array.isArray(data.razorpayWebhooks) ? data.razorpayWebhooks : []);
       }
     } catch {
       // Non-blocking
@@ -840,12 +852,12 @@ export function AdminDashboard({
             </div>
 
             <div className="p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-              <span className="text-xs text-slate-500 font-medium block">Verified Collections (PayU + Bank)</span>
+              <span className="text-xs text-slate-500 font-medium block">Verified Collections (Razorpay + PayU + Bank)</span>
               <span className="text-2xl font-bold text-emerald-600 font-mono mt-1 block">
-                ₹{(kpiData.totalPaymentsReceived + (payuStats?.totalVerifiedCollectionsINR || 0)).toLocaleString('en-IN')}
+                ₹{(kpiData.totalPaymentsReceived + (payuStats?.totalVerifiedCollectionsINR || 0) + (razorpayStats?.totalCapturedCollectionsINR || 0)).toLocaleString('en-IN')}
               </span>
               <span className="text-[11px] text-amber-600 font-semibold mt-1 block">
-                {kpiData.pendingBankReconciliationCount + (payuStats?.pendingCount || 0)} Pending · {payuStats?.failedCount || 0} Failed · {payuStats?.refundedCount || 0} Refunded
+                {kpiData.pendingBankReconciliationCount + (payuStats?.pendingCount || 0) + (razorpayStats?.pendingCount || 0)} Pending · {(payuStats?.failedCount || 0) + (razorpayStats?.failedCount || 0)} Failed · {(payuStats?.refundedCount || 0) + (razorpayStats?.refundedCount || 0)} Refunded
               </span>
             </div>
           </div>
@@ -1232,9 +1244,18 @@ export function AdminDashboard({
         </div>
       )}
 
-      {/* SECTION 4: PAYU PAYMENT LEDGER & BANK RECONCILIATION DESK */}
+      {/* SECTION 4: RAZORPAY, PAYU & BANK PAYMENT RECONCILIATION DESK */}
       {activeSection === 'payments' && (
         <div className="space-y-6">
+          {/* Primary Private Admin Razorpay Payment Management Console */}
+          <RazorpayPaymentsConsole
+            stats={razorpayStats}
+            payments={razorpayPayments}
+            webhooks={razorpayWebhooks}
+            loading={payuLoading}
+            onRefresh={fetchServerPayULedger}
+          />
+
           {/* Server-Authoritative PayU Transaction Ledger */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

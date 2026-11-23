@@ -120,45 +120,51 @@ export function verifyRazorpayWebhookSignature(
  * Returns honest readiness diagnostics without exposing any secret values.
  */
 export function getRazorpayReadinessStatus(): RazorpayReadinessStatus {
+  const mode = (process.env.RAZORPAY_MODE || 'test').toLowerCase().trim();
+  const hasKeyId = Boolean(process.env.RAZORPAY_KEY_ID);
+  const hasSecret = Boolean(process.env.RAZORPAY_KEY_SECRET);
   return {
     gateway: 'razorpay',
-    liveCheckoutEnabled: false,
+    liveCheckoutEnabled: mode === 'live' && hasKeyId && hasSecret,
     merchantVerificationStatus: 'pending_approval',
     requiredServerEnvVars: [
       'RAZORPAY_KEY_ID',
       'RAZORPAY_KEY_SECRET',
-      'RAZORPAY_WEBHOOK_SECRET'
+      'RAZORPAY_WEBHOOK_SECRET',
+      'RAZORPAY_MODE'
     ],
     configuredEnvVars: {
-      RAZORPAY_KEY_ID: Boolean(process.env.RAZORPAY_KEY_ID),
-      RAZORPAY_KEY_SECRET: Boolean(process.env.RAZORPAY_KEY_SECRET),
-      RAZORPAY_WEBHOOK_SECRET: Boolean(process.env.RAZORPAY_WEBHOOK_SECRET)
+      RAZORPAY_KEY_ID: hasKeyId,
+      RAZORPAY_KEY_SECRET: hasSecret,
+      RAZORPAY_WEBHOOK_SECRET: Boolean(process.env.RAZORPAY_WEBHOOK_SECRET),
+      RAZORPAY_MODE: Boolean(process.env.RAZORPAY_MODE)
     },
     plannedEndpoints: [
       {
         method: 'POST',
-        path: '/api/payments/create-order',
+        path: '/api/create-order',
         purpose: 'Server-authoritative INR amount & GST calculation and Razorpay Order creation with idempotency key',
-        security: 'Server-side pricing lookup; never trusts client-supplied amount'
+        security: 'Server-side pricing lookup; Firebase ID token auth; never trusts client-supplied amount'
       },
       {
         method: 'POST',
-        path: '/api/payments/verify',
-        purpose: 'Verify Razorpay HMAC-SHA256 payment signature on server and mark order authorized/captured',
-        security: 'crypto.timingSafeEqual HMAC check using RAZORPAY_KEY_SECRET'
+        path: '/api/verify-payment',
+        purpose: 'Verify Razorpay HMAC-SHA256 payment signature against server-saved order ID and confirm capture via Razorpay API',
+        security: 'crypto.timingSafeEqual HMAC check using RAZORPAY_KEY_SECRET + Razorpay Payments API fetch'
       },
       {
         method: 'POST',
-        path: '/api/webhooks/payment',
-        purpose: 'Idempotent Razorpay webhook reconciliation for payment.captured, payment.failed, refund.processed',
-        security: 'Raw-body HMAC verification using RAZORPAY_WEBHOOK_SECRET + deduplication'
+        path: '/api/webhooks/razorpay',
+        purpose: 'Idempotent Razorpay webhook reconciliation for payment.authorized, payment.captured, payment.failed, order.paid, refund.*',
+        security: 'Raw-body HMAC verification using RAZORPAY_WEBHOOK_SECRET + event ID deduplication'
       },
       {
         method: 'GET',
-        path: '/api/payments/status/:applicationId',
-        purpose: 'Authenticated lookup of authoritative payment & receipt status for applicant or admin',
-        security: 'Requires verified Firebase/session token & owner/admin RBAC check'
+        path: '/api/payments/razorpay/status',
+        purpose: 'Public config readiness check (?mode=config) and authenticated owner/admin payment status lookup',
+        security: 'Requires verified Firebase ID token & owner/admin RBAC check for payment records'
       }
     ]
   };
 }
+

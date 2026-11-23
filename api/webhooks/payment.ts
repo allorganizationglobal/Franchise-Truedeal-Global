@@ -1,9 +1,10 @@
 import crypto from 'crypto';
 import { processPayUGatewayResponse, timingSafeHexEquals } from '../../src/server/payuService';
+import { processRazorpayWebhook } from '../../src/server/razorpayService';
 
 /**
  * Vercel Serverless Function: POST /api/webhooks/payment
- * Legacy webhook endpoint updated to route PayU India Classic reverse-hash payloads cleanly
+ * Legacy webhook endpoint updated to route Razorpay & PayU webhooks cleanly
  * or validate HMAC-SHA256 signatures in constant time when PAYMENT_WEBHOOK_SECRET is configured.
  */
 
@@ -16,6 +17,24 @@ export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
     res.statusCode = 405;
     return res.end(JSON.stringify({ error: 'method_not_allowed' }));
+  }
+
+  // Delegate Razorpay webhooks if x-razorpay-signature header is present
+  const rzpSig = (req.headers?.['x-razorpay-signature'] as string) || '';
+  if (rzpSig) {
+    const rawBody =
+      typeof req.rawBody === 'string'
+        ? req.rawBody
+        : typeof req.body === 'string'
+        ? req.body
+        : JSON.stringify(req.body || {});
+    const result = await processRazorpayWebhook({
+      rawBody,
+      signatureHeader: rzpSig,
+      eventIdHeader: (req.headers?.['x-razorpay-event-id'] as string) || undefined
+    });
+    res.statusCode = result.statusCode;
+    return res.end(JSON.stringify(result));
   }
 
   let body = req.body;

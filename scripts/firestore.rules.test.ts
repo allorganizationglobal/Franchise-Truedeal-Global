@@ -103,12 +103,12 @@ verify(
   'DD-11: Client webhook injection blocked on payment_webhook_events'
 );
 
-// 11. Dirty Dozen #12: Denial-of-Wallet size limits & monotonic SUCCESS lock
+// 11. Dirty Dozen #12: Denial-of-Wallet size limits & monotonic SUCCESS/CAPTURED lock
 verify(
   rules.includes('data.applicantName.size() <= 120') &&
     rules.includes('data.sizeBytes <= 10485760') &&
-    rules.includes("existing().paymentStatus != 'SUCCESS'"),
-  'DD-12: String/file size bounds enforced and SUCCESS payments locked against downgrade'
+    rules.includes("!(existing().paymentStatus in ['SUCCESS', 'CAPTURED'])"),
+  'DD-12: String/file size bounds enforced and SUCCESS/CAPTURED payments locked against downgrade'
 );
 
 let passed = 0;

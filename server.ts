@@ -19,6 +19,17 @@ import {
   getPayUPersistenceAdapter,
   timingSafeHexEquals
 } from './src/server/payuService';
+import {
+  getRazorpayConfigStatus,
+  createRazorpayOrder,
+  verifyRazorpayPayment,
+  processRazorpayWebhook,
+  recordClientCheckoutAttemptEvent,
+  reconcileRazorpayOrder,
+  initiateRazorpayRefund,
+  addRazorpayAdminNote,
+  getRazorpayPersistenceAdapter
+} from './src/server/razorpayService';
 import { sendTransactionalFranchiseEmail } from './src/server/emailService';
 
 dotenv.config();
@@ -54,13 +65,21 @@ async function createServer() {
     next();
   });
 
-  // Middleware for parsing JSON and URL-encoded bodies (PayU sends application/x-www-form-urlencoded)
-  app.use(express.json({ limit: '10mb' }));
+  // Middleware for parsing JSON (capturing exact rawBody for Razorpay webhook HMAC verification) and URL-encoded bodies
+  app.use(
+    express.json({
+      limit: '10mb',
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf.toString('utf8');
+      }
+    })
+  );
   app.use(express.urlencoded({ extended: true }));
 
   // API Health Endpoint (never exposes secrets)
   app.get('/api/health', (_req: Request, res: Response) => {
     const payuStatus = getPayUConfigStatus();
+    const razorpayStatus = getRazorpayConfigStatus();
     res.json({
       status: 'healthy',
       timestamp: new Date().toISOString(),
@@ -69,6 +88,7 @@ async function createServer() {
         endpoint: 'https://crm.truedealglobal.com/api/leads/ingest',
         sendgridConfigured: !!process.env.SENDGRID_API_KEY
       },
+      razorpayGateway: razorpayStatus,
       paymentGateway: payuStatus,
       security: {
         rbacActive: true,
@@ -79,9 +99,12 @@ async function createServer() {
     });
   });
 
-  // PayU Classic Hosted Checkout Readiness Diagnostics (no secrets exposed)
+  // Payment Gateway Readiness Diagnostics (no secrets exposed)
   app.get('/api/payments/readiness', (_req: Request, res: Response) => {
-    return res.status(200).json(getPayUConfigStatus());
+    return res.status(200).json({
+      razorpay: getRazorpayConfigStatus(),
+      payu: getPayUConfigStatus()
+    });
   });
 
   // Server-Validated Contact Us Inquiry Endpoint
@@ -204,7 +227,149 @@ async function createServer() {
   });
 
   // =========================================================================
-  // PAYU INDIA CLASSIC HOSTED CHECKOUT ROUTES
+  // RAZORPAY STANDARD WEB CHECKOUT ROUTES (Primary Gateway)
+  // =========================================================================
+
+  // 1. Create Razorpay Order (Authenticated, Server-Calculated Price & GST)
+  app.post('/api/create-order', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid || !caller.email) {
+      return res.status(401).json({
+        ok: false,
+        error: 'unauthorized',
+        message: caller.error || 'Please sign in with Google before initiating payment.'
+      });
+    }
+
+    const body = req.body || {};
+    const result = await createRazorpayOrder({
+      applicationId: String(body.applicationId || ''),
+      planId: String(body.planId || ''),
+      paymentPurpose: body.paymentPurpose === 'application_fee' ? 'application_fee' : 'franchise_deposit',
+      userId: caller.uid,
+      applicantName: String(body.applicantName || caller.name || 'Franchise Applicant'),
+      email: caller.email,
+      phone: String(body.phone || ''),
+      termsAccepted: body.termsAccepted !== false,
+      forceNewOrder: Boolean(body.forceNewOrder),
+      clientIp: getClientIp(req)
+    });
+
+    return res.status(result.statusCode).json(result);
+  });
+
+  // 2. Verify Razorpay Payment Signature + Fetch Capture Status
+  app.post('/api/verify-payment', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid) {
+      return res.status(401).json({
+        ok: false,
+        verified: false,
+        captured: false,
+        error: 'unauthorized',
+        message: caller.error || 'Authentication required to verify payment.'
+      });
+    }
+
+    const body = req.body || {};
+    const result = await verifyRazorpayPayment({
+      razorpay_order_id: String(body.razorpay_order_id || ''),
+      razorpay_payment_id: String(body.razorpay_payment_id || ''),
+      razorpay_signature: String(body.razorpay_signature || ''),
+      applicationId: body.applicationId ? String(body.applicationId) : undefined,
+      callerUid: caller.uid,
+      callerIsAdmin: Boolean(caller.isAdmin),
+      clientIp: getClientIp(req)
+    });
+
+    return res.status(result.statusCode).json(result);
+  });
+
+  // 3. Razorpay Webhook Endpoint (Raw Body HMAC-SHA256 Verification + Event Deduplication)
+  app.post('/api/webhooks/razorpay', async (req: Request, res: Response) => {
+    const rawBody =
+      typeof (req as any).rawBody === 'string'
+        ? (req as any).rawBody
+        : typeof req.body === 'string'
+        ? req.body
+        : JSON.stringify(req.body || {});
+
+    const result = await processRazorpayWebhook({
+      rawBody,
+      signatureHeader: (req.headers['x-razorpay-signature'] as string) || '',
+      eventIdHeader: (req.headers['x-razorpay-event-id'] as string) || undefined
+    });
+
+    return res.status(result.statusCode).json({
+      ok: result.ok,
+      duplicate: Boolean(result.duplicate),
+      eventId: result.eventId || null,
+      eventType: result.eventType || null,
+      paymentStatus: result.paymentStatus || null,
+      error: result.error,
+      message: result.message
+    });
+  });
+
+  // 4. Razorpay Config Readiness & Authenticated Owner/Admin Status Lookup
+  app.get('/api/payments/razorpay/status', async (req: Request, res: Response) => {
+    if (req.query.mode === 'config') {
+      return res.status(200).json({ ok: true, config: getRazorpayConfigStatus() });
+    }
+
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
+    }
+
+    const orderId = String(req.query.orderId || '').trim();
+    const applicationId = String(req.query.applicationId || '').trim();
+    const store = getRazorpayPersistenceAdapter();
+
+    if (orderId) {
+      const payment = await store.getPaymentByOrderId(orderId);
+      if (!payment) {
+        return res.status(404).json({ ok: false, error: 'not_found', message: 'Razorpay order not found.' });
+      }
+      if (!caller.isAdmin && payment.userId !== caller.uid) {
+        return res.status(403).json({ ok: false, error: 'forbidden', message: 'Unauthorized access to payment record.' });
+      }
+      return res.status(200).json({ ok: true, payment });
+    }
+
+    if (applicationId) {
+      const payments = await store.getPaymentsByApplicationId(applicationId);
+      const visible = caller.isAdmin ? payments : payments.filter((p) => p.userId === caller.uid);
+      return res.status(200).json({ ok: true, payments: visible });
+    }
+
+    return res.status(400).json({ ok: false, error: 'missing_query', message: 'Provide mode=config, orderId, or applicationId.' });
+  });
+
+  app.post('/api/payments/razorpay/status', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
+    }
+    const body = req.body || {};
+    const targetOrderId = String(body.razorpayOrderId || '').trim();
+    const outcome = body.outcome === 'failed' ? 'failed' : body.outcome === 'cancelled' ? 'cancelled' : null;
+    if (!targetOrderId || !outcome) {
+      return res.status(400).json({ ok: false, error: 'invalid_payload' });
+    }
+    const result = await recordClientCheckoutAttemptEvent({
+      razorpayOrderId: targetOrderId,
+      callerUid: caller.uid,
+      callerIsAdmin: Boolean(caller.isAdmin),
+      outcome,
+      reason: body.reason ? String(body.reason).slice(0, 300) : undefined,
+      razorpayPaymentId: body.razorpayPaymentId ? String(body.razorpayPaymentId).slice(0, 128) : undefined
+    });
+    return res.status(result.statusCode).json(result);
+  });
+
+  // =========================================================================
+  // PAYU INDIA CLASSIC HOSTED CHECKOUT ROUTES (Preserved)
   // =========================================================================
 
   // 1. Initiate PayU Payment Order (Authenticated, Server-Calculated Amount & SHA-512 Hash)
@@ -331,7 +496,7 @@ async function createServer() {
     return res.status(400).json({ ok: false, error: 'missing_query', message: 'Provide txnid, applicationId, or mode=config.' });
   });
 
-  // 6. Admin Payments Ledger, Stats, Reconciliation & Refund State Management (Strictly Admin-Only)
+  // 6. Admin Payments Ledger, Stats, Reconciliation & Refund Management (Strictly Admin-Only)
   app.get('/api/admin/payments', async (req: Request, res: Response) => {
     const caller = await verifyFirebaseBearerToken(req.headers.authorization);
     if (!caller.valid || !caller.uid) {
@@ -342,8 +507,13 @@ async function createServer() {
     }
 
     const store = getPayUPersistenceAdapter();
-    const payments = await store.getAllPayments();
-    const webhookEvents = await store.getAllWebhookEvents();
+    const rzpStore = getRazorpayPersistenceAdapter();
+    const [payments, webhookEvents, razorpayPayments, razorpayWebhooks] = await Promise.all([
+      store.getAllPayments(),
+      store.getAllWebhookEvents(),
+      rzpStore.getAllPayments(),
+      rzpStore.getAllWebhookEvents()
+    ]);
 
     const stats = {
       totalTransactions: payments.length,
@@ -357,7 +527,33 @@ async function createServer() {
         .reduce((sum, p) => sum + p.amount, 0)
     };
 
-    return res.status(200).json({ ok: true, stats, payments, webhookEvents });
+    const razorpayStats = {
+      totalTransactions: razorpayPayments.length,
+      capturedCount: razorpayPayments.filter((p) => p.paymentStatus === 'CAPTURED').length,
+      pendingCount: razorpayPayments.filter((p) =>
+        p.paymentStatus === 'CREATED' ||
+        p.paymentStatus === 'PENDING' ||
+        p.paymentStatus === 'AUTHORIZED' ||
+        p.paymentStatus === 'VERIFICATION_REQUIRED'
+      ).length,
+      failedCount: razorpayPayments.filter((p) => p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED').length,
+      refundInitiatedCount: razorpayPayments.filter((p) => p.paymentStatus === 'REFUND_INITIATED').length,
+      refundedCount: razorpayPayments.filter((p) => p.paymentStatus === 'REFUNDED').length,
+      totalCapturedCollectionsINR: razorpayPayments
+        .filter((p) => p.paymentStatus === 'CAPTURED')
+        .reduce((sum, p) => sum + p.finalAmountINR, 0),
+      gatewayConfig: getRazorpayConfigStatus()
+    };
+
+    return res.status(200).json({
+      ok: true,
+      stats,
+      payments,
+      webhookEvents,
+      razorpayStats,
+      razorpayPayments,
+      razorpayWebhooks
+    });
   });
 
   app.post('/api/admin/payments', async (req: Request, res: Response) => {
@@ -370,6 +566,38 @@ async function createServer() {
     }
 
     const action = String(req.body?.action || '').trim();
+
+    if (action === 'razorpay_reconcile') {
+      const orderId = String(req.body?.orderId || '').trim();
+      if (!orderId) return res.status(400).json({ ok: false, error: 'missing_order_id' });
+      const result = await reconcileRazorpayOrder(orderId);
+      return res.status(result.statusCode).json(result);
+    }
+
+    if (action === 'razorpay_refund') {
+      const orderId = String(req.body?.orderId || '').trim();
+      const reason = String(req.body?.reason || 'Administrative franchise refund').trim();
+      if (!orderId) return res.status(400).json({ ok: false, error: 'missing_order_id' });
+      const result = await initiateRazorpayRefund({
+        orderId,
+        reason,
+        actorEmail: caller.email || 'admin@truedealglobal.com'
+      });
+      return res.status(result.statusCode).json(result);
+    }
+
+    if (action === 'razorpay_add_note') {
+      const orderId = String(req.body?.orderId || '').trim();
+      const note = String(req.body?.note || '').trim();
+      if (!orderId || !note) return res.status(400).json({ ok: false, error: 'missing_fields' });
+      const result = await addRazorpayAdminNote({
+        orderId,
+        note,
+        actorEmail: caller.email || 'admin@truedealglobal.com'
+      });
+      return res.status(result.statusCode).json(result);
+    }
+
     const txnid = String(req.body?.txnid || '').trim();
     if (!txnid) {
       return res.status(400).json({ ok: false, error: 'missing_txnid' });

@@ -64,18 +64,25 @@
           "type": "string",
           "enum": [
             "CREATED",
+            "PENDING",
             "PAYMENT_PENDING",
+            "AUTHORIZED",
+            "CAPTURED",
             "SUCCESS",
             "FAILED",
             "CANCELLED",
             "EXPIRED",
+            "REFUND_INITIATED",
             "REFUND_PENDING",
             "REFUNDED",
+            "VERIFICATION_REQUIRED",
             "UNDER_REVIEW"
           ]
         },
         "paymentId": { "type": "string", "maxLength": 128 },
         "txnId": { "type": "string", "maxLength": 128 },
+        "razorpayOrderId": { "type": "string", "maxLength": 128 },
+        "razorpayPaymentId": { "type": "string", "maxLength": 128 },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
@@ -83,27 +90,41 @@
     },
     "FranchisePayment": {
       "title": "FranchisePayment",
-      "description": "Server-verified PayU Hosted Checkout payment record. Never stores raw card, CVV, or OTP data.",
+      "description": "Server-verified Razorpay & PayU franchise payment record. Never stores raw card, CVV, UPI PIN, or OTP data.",
       "type": "object",
       "properties": {
         "paymentId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "applicationId": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "gateway": { "type": "string", "enum": ["razorpay", "payu", "bank_transfer"] },
         "txnId": { "type": "string", "minLength": 6, "maxLength": 128 },
         "payuTransactionId": { "type": "string", "maxLength": 128 },
+        "razorpayOrderId": { "type": "string", "maxLength": 128 },
+        "razorpayPaymentId": { "type": "string", "maxLength": 128 },
+        "baseAmount": { "type": "number" },
+        "gstAmount": { "type": "number" },
         "amount": { "type": "number" },
         "currency": { "type": "string", "enum": ["INR"] },
+        "signatureVerified": { "type": "boolean" },
+        "captureStatus": { "type": "string", "enum": ["unpaid", "authorized", "captured", "failed", "refunded"] },
+        "refundStatus": { "type": "string", "enum": ["none", "initiated", "processed", "failed"] },
+        "refundId": { "type": "string", "maxLength": 128 },
         "paymentStatus": {
           "type": "string",
           "enum": [
             "CREATED",
+            "PENDING",
             "PAYMENT_PENDING",
+            "AUTHORIZED",
+            "CAPTURED",
             "SUCCESS",
             "FAILED",
             "CANCELLED",
             "EXPIRED",
+            "REFUND_INITIATED",
             "REFUND_PENDING",
             "REFUNDED",
+            "VERIFICATION_REQUIRED",
             "UNDER_REVIEW"
           ]
         },
@@ -131,14 +152,17 @@
     },
     "PaymentWebhookEvent": {
       "title": "PaymentWebhookEvent",
-      "description": "Idempotent PayU webhook and verification event ledger restricted exclusively to administrators.",
+      "description": "Idempotent Razorpay & PayU webhook and verification event ledger restricted exclusively to administrators.",
       "type": "object",
       "properties": {
         "eventId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "eventType": { "type": "string", "maxLength": 64 },
         "txnId": { "type": "string", "minLength": 4, "maxLength": 128 },
+        "razorpayOrderId": { "type": "string", "maxLength": 128 },
+        "razorpayPaymentId": { "type": "string", "maxLength": 128 },
         "applicationId": { "type": "string", "maxLength": 64 },
         "status": { "type": "string", "maxLength": 64 },
-        "source": { "type": "string", "enum": ["webhook", "callback", "verify_api"] },
+        "source": { "type": "string", "enum": ["webhook", "callback", "verify_api", "razorpay_webhook"] },
         "receivedAt": { "type": "string", "maxLength": 64 }
       },
       "required": ["eventId", "txnId", "status", "source", "receivedAt"]

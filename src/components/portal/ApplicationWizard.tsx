@@ -1155,7 +1155,7 @@ export function ApplicationWizard({
                       Official Corporate Bank Account ({complianceConfig.legalName})
                     </span>
                     <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded">
-                      PayU India Hosted Checkout &amp; Corporate Bank Supported
+                      Razorpay Checkout · PayU · Corporate Bank Supported
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1177,9 +1177,9 @@ export function ApplicationWizard({
                 {!paymentCompleted ? (
                   <div className="space-y-3 pt-1">
                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                      You may proceed to Step 6 and submit your application without upfront payment (recommended so our
-                      compliance team can verify your territory first), or optionally record a corporate bank transfer
-                      UTR reference for manual accounts verification.
+                      Submit your application in Step 6 to receive your Application Reference ID, then pay securely via{' '}
+                      <strong>Razorpay Standard Checkout</strong> (UPI, Cards, NetBanking, Wallets) — or optionally
+                      record a Corporate Bank / UPI UTR reference below.
                     </p>
                     <button
                       type="button"
@@ -1187,7 +1187,7 @@ export function ApplicationWizard({
                       className="py-2.5 px-4 bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <QrCode className="w-4 h-4" />
-                      <span>Optional: Record Corporate Bank / UPI Reference (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
+                      <span>Preview Razorpay / Bank Payment Options (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
                     </button>
                   </div>
                 ) : (
@@ -1477,14 +1477,14 @@ export function ApplicationWizard({
           </div>
 
           <div className="flex flex-wrap gap-3 justify-center pt-2">
-            {submissionResult.paymentStatus !== 'SUCCESS' && (
+            {submissionResult.paymentStatus !== 'SUCCESS' && submissionResult.paymentStatus !== 'CAPTURED' && (
               <button
                 type="button"
                 onClick={() => setShowPaymentModal(true)}
                 className="py-2.5 px-6 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer"
               >
                 <CreditCard className="w-3.5 h-3.5" />
-                <span>Proceed to PayU Hosted Checkout (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
+                <span>Pay Now via Razorpay (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
               </button>
             )}
             <button

@@ -23,8 +23,11 @@ export interface TransactionalEmailPayload {
   applicationId: string;
   planName: string;
   amountINR?: number;
+  baseAmountINR?: number;
+  gstAmountINR?: number;
   txnId?: string;
   payuTransactionId?: string;
+  gatewayName?: string;
   receiptNumber?: string;
   reason?: string;
 }
@@ -52,8 +55,17 @@ function buildEmailContent(payload: TransactionalEmailPayload): { subject: strin
     typeof payload.amountINR === 'number'
       ? `₹${payload.amountINR.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
       : '';
+  const safeBase =
+    typeof payload.baseAmountINR === 'number'
+      ? `₹${payload.baseAmountINR.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+      : '';
+  const safeGst =
+    typeof payload.gstAmountINR === 'number' && payload.gstAmountINR > 0
+      ? `₹${payload.gstAmountINR.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+      : 'As applicable per invoice';
   const safeTxn = escapeHtml(payload.txnId || '');
-  const safePayuId = escapeHtml(payload.payuTransactionId || '');
+  const safeGatewayRef = escapeHtml(payload.payuTransactionId || '');
+  const safeGateway = escapeHtml(payload.gatewayName || 'PayU India');
   const safeReceipt = escapeHtml(payload.receiptNumber || '');
   const safeReason = escapeHtml(payload.reason || '');
 
@@ -65,15 +77,17 @@ function buildEmailContent(payload: TransactionalEmailPayload): { subject: strin
           <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;color:#0f172a;">
             <h2 style="color:#059669;">Payment Verified &amp; Receipt Issued</h2>
             <p>Dear ${safeName},</p>
-            <p>Your franchise payment for <strong>${safePlan}</strong> has been independently verified via PayU India.</p>
+            <p>Your franchise payment for <strong>${safePlan}</strong> has been independently verified and captured via ${safeGateway}.</p>
             <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
               <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Receipt Number</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeReceipt}</td></tr>
               <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Application ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeAppId}</td></tr>
-              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Merchant Txn ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeTxn}</td></tr>
-              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>PayU Transaction ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safePayuId || 'Recorded'}</td></tr>
-              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Verified Amount</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeAmount} INR</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Order / Reference ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeTxn}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>${safeGateway} Payment ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeGatewayRef || 'Recorded'}</td></tr>
+              ${safeBase ? `<tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Base Fee</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeBase} INR</td></tr>` : ''}
+              ${safeBase ? `<tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>GST</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeGst}</td></tr>` : ''}
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Verified Total Captured</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeAmount} INR</td></tr>
             </table>
-            <p>Your application is now queued for KYC verification and onboarding compliance review by TRUEDEAL GLOBAL OPC PVT LTD.</p>
+            <p><strong>Important:</strong> Payment confirmation is separate from franchise approval. Your application is queued for KYC verification and administrative approval by TRUEDEAL GLOBAL OPC PVT LTD.</p>
             <p style="font-size:12px;color:#64748b;">Official Portal: https://businessfranchise.truedealglobal.com/ | Support: info@truedealglobal.com</p>
           </div>`
       };

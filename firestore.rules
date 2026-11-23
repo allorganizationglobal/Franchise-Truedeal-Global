@@ -79,6 +79,7 @@ service cloud.firestore {
           'applicationId', 'userId', 'applicantName', 'email', 'phone',
           'franchisePlanId', 'franchisePlanName', 'amount', 'currency',
           'applicationStatus', 'paymentStatus', 'paymentId', 'txnId',
+          'razorpayOrderId', 'razorpayPaymentId',
           'territoryRequested', 'createdAt', 'updatedAt'
         ]) &&
         data.applicationId is string && data.applicationId == appId && isValidId(data.applicationId) &&
@@ -97,11 +98,14 @@ service cloud.firestore {
           'onboarded', 'automated_verified', 'revision_requested', 'declined'
         ] &&
         data.paymentStatus in [
-          'CREATED', 'PAYMENT_PENDING', 'SUCCESS', 'FAILED', 'CANCELLED',
-          'EXPIRED', 'REFUND_PENDING', 'REFUNDED', 'UNDER_REVIEW'
+          'CREATED', 'PENDING', 'PAYMENT_PENDING', 'AUTHORIZED', 'CAPTURED', 'SUCCESS',
+          'FAILED', 'CANCELLED', 'EXPIRED', 'REFUND_INITIATED', 'REFUND_PENDING',
+          'REFUNDED', 'VERIFICATION_REQUIRED', 'UNDER_REVIEW'
         ] &&
         (!('paymentId' in data) || (data.paymentId is string && data.paymentId.size() <= 128)) &&
         (!('txnId' in data) || (data.txnId is string && data.txnId.size() <= 128)) &&
+        (!('razorpayOrderId' in data) || (data.razorpayOrderId is string && data.razorpayOrderId.size() <= 128)) &&
+        (!('razorpayPaymentId' in data) || (data.razorpayPaymentId is string && data.razorpayPaymentId.size() <= 128)) &&
         (!('territoryRequested' in data) || (data.territoryRequested is string && data.territoryRequested.size() <= 160)) &&
         data.createdAt is string && data.createdAt.size() <= 64 &&
         data.updatedAt is string && data.updatedAt.size() <= 64;
@@ -131,20 +135,32 @@ service cloud.firestore {
           'amount', 'currency', 'paymentStatus', 'createdAt', 'updatedAt'
         ]) &&
         data.keys().hasOnly([
-          'paymentId', 'applicationId', 'userId', 'txnId', 'payuTransactionId',
-          'amount', 'currency', 'paymentStatus', 'paymentMethod',
-          'gatewayResponse', 'receiptNumber', 'verifiedAt', 'createdAt', 'updatedAt'
+          'paymentId', 'applicationId', 'userId', 'gateway', 'txnId', 'payuTransactionId',
+          'razorpayOrderId', 'razorpayPaymentId', 'baseAmount', 'gstAmount',
+          'amount', 'currency', 'signatureVerified', 'captureStatus', 'refundStatus', 'refundId',
+          'paymentStatus', 'paymentMethod', 'gatewayResponse', 'receiptNumber',
+          'verifiedAt', 'createdAt', 'updatedAt'
         ]) &&
         data.paymentId is string && data.paymentId == paymentId && isValidId(data.paymentId) &&
         data.applicationId is string && isValidId(data.applicationId) &&
         data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        (!('gateway' in data) || data.gateway in ['razorpay', 'payu', 'bank_transfer']) &&
         data.txnId is string && data.txnId.size() >= 6 && data.txnId.size() <= 128 &&
         (!('payuTransactionId' in data) || (data.payuTransactionId is string && data.payuTransactionId.size() <= 128)) &&
+        (!('razorpayOrderId' in data) || (data.razorpayOrderId is string && data.razorpayOrderId.size() <= 128)) &&
+        (!('razorpayPaymentId' in data) || (data.razorpayPaymentId is string && data.razorpayPaymentId.size() <= 128)) &&
+        (!('baseAmount' in data) || (data.baseAmount is number && data.baseAmount >= 0 && data.baseAmount <= 10000000)) &&
+        (!('gstAmount' in data) || (data.gstAmount is number && data.gstAmount >= 0 && data.gstAmount <= 10000000)) &&
         data.amount is number && data.amount > 0 && data.amount <= 10000000 &&
         data.currency == 'INR' &&
+        (!('signatureVerified' in data) || data.signatureVerified is bool) &&
+        (!('captureStatus' in data) || data.captureStatus in ['unpaid', 'authorized', 'captured', 'failed', 'refunded']) &&
+        (!('refundStatus' in data) || data.refundStatus in ['none', 'initiated', 'processed', 'failed']) &&
+        (!('refundId' in data) || (data.refundId is string && data.refundId.size() <= 128)) &&
         data.paymentStatus in [
-          'CREATED', 'PAYMENT_PENDING', 'SUCCESS', 'FAILED', 'CANCELLED',
-          'EXPIRED', 'REFUND_PENDING', 'REFUNDED', 'UNDER_REVIEW'
+          'CREATED', 'PENDING', 'PAYMENT_PENDING', 'AUTHORIZED', 'CAPTURED', 'SUCCESS',
+          'FAILED', 'CANCELLED', 'EXPIRED', 'REFUND_INITIATED', 'REFUND_PENDING',
+          'REFUNDED', 'VERIFICATION_REQUIRED', 'UNDER_REVIEW'
         ] &&
         (!('paymentMethod' in data) || (data.paymentMethod is string && data.paymentMethod.size() <= 64)) &&
         (!('gatewayResponse' in data) || data.gatewayResponse is map) &&
@@ -170,14 +186,20 @@ service cloud.firestore {
 
     function isValidWebhookEvent(data, eventId) {
       return data.keys().hasAll(['eventId', 'txnId', 'status', 'source', 'receivedAt']) &&
-        data.keys().hasOnly(['eventId', 'txnId', 'applicationId', 'payuTransactionId', 'amount', 'status', 'source', 'receivedAt']) &&
+        data.keys().hasOnly([
+          'eventId', 'eventType', 'txnId', 'applicationId', 'payuTransactionId',
+          'razorpayOrderId', 'razorpayPaymentId', 'amount', 'status', 'source', 'receivedAt'
+        ]) &&
         data.eventId is string && data.eventId == eventId && isValidId(data.eventId) &&
+        (!('eventType' in data) || (data.eventType is string && data.eventType.size() <= 64)) &&
         data.txnId is string && data.txnId.size() >= 4 && data.txnId.size() <= 128 &&
         (!('applicationId' in data) || (data.applicationId is string && data.applicationId.size() <= 64)) &&
         (!('payuTransactionId' in data) || (data.payuTransactionId is string && data.payuTransactionId.size() <= 128)) &&
+        (!('razorpayOrderId' in data) || (data.razorpayOrderId is string && data.razorpayOrderId.size() <= 128)) &&
+        (!('razorpayPaymentId' in data) || (data.razorpayPaymentId is string && data.razorpayPaymentId.size() <= 128)) &&
         (!('amount' in data) || (data.amount is number && data.amount >= 0)) &&
         data.status is string && data.status.size() >= 2 && data.status.size() <= 64 &&
-        data.source in ['webhook', 'callback', 'verify_api'] &&
+        data.source in ['webhook', 'callback', 'verify_api', 'razorpay_webhook'] &&
         data.receivedAt is string && data.receivedAt.size() <= 64;
     }
 
@@ -314,7 +336,7 @@ service cloud.firestore {
         isAdmin() &&
         isValidFranchisePayment(incoming(), paymentId);
 
-      // Prevent downgrading SUCCESS back to FAILED/CANCELLED even on admin edits
+      // Prevent downgrading SUCCESS or CAPTURED back to FAILED/CANCELLED even on admin edits
       allow update: if isValidId(paymentId) &&
         isAdmin() &&
         isValidFranchisePayment(incoming(), paymentId) &&
@@ -322,7 +344,8 @@ service cloud.firestore {
         incoming().applicationId == existing().applicationId &&
         incoming().userId == existing().userId &&
         incoming().createdAt == existing().createdAt &&
-        (existing().paymentStatus != 'SUCCESS' || incoming().paymentStatus in ['SUCCESS', 'REFUND_PENDING', 'REFUNDED']);
+        (!(existing().paymentStatus in ['SUCCESS', 'CAPTURED']) ||
+          incoming().paymentStatus in ['SUCCESS', 'CAPTURED', 'REFUND_INITIATED', 'REFUND_PENDING', 'REFUNDED']);
 
       allow delete: if false;
     }

@@ -1,6 +1,9 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  initializeFirestore,
   getFirestore,
+  Firestore,
+  FirestoreSettings,
   doc,
   getDocFromServer,
   setDoc,
@@ -23,11 +26,35 @@ import { FranchiseApplication } from '../types/franchise';
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore (support custom databaseId if configured)
-export const db =
+const firestoreDatabaseId =
   firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-    ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-    : getFirestore(app);
+    ? firebaseConfig.firestoreDatabaseId
+    : undefined;
+
+/**
+ * Initialize Cloud Firestore with forced long-polling in browser environments.
+ * Prevents the 10-second WebChannel streaming timeout ("Could not reach Cloud Firestore backend")
+ * behind buffering proxies, corporate firewalls, and sandboxed preview iframes.
+ */
+function initFirestoreDb(): Firestore {
+  if (typeof window !== 'undefined') {
+    const settings: FirestoreSettings = {
+      experimentalForceLongPolling: true,
+      experimentalLongPollingOptions: { timeoutSeconds: 15 }
+    };
+    try {
+      return firestoreDatabaseId
+        ? initializeFirestore(app, settings, firestoreDatabaseId)
+        : initializeFirestore(app, settings);
+    } catch {
+      // Firestore instance already initialized on this app (e.g., module reload)
+    }
+  }
+  return firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+}
+
+// Initialize Firestore (support custom databaseId if configured)
+export const db = initFirestoreDb();
 
 // Initialize Firebase Authentication & Storage
 export const auth = getAuth(app);
@@ -189,6 +216,16 @@ export async function pingFirestoreDatabase(): Promise<{
   databaseId: string;
   projectId: string;
 }> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return {
+      success: false,
+      latencyMs: 0,
+      message: 'Browser is offline (local resilient cache active)',
+      databaseId: firestoreInfo.databaseId,
+      projectId: firestoreInfo.projectId
+    };
+  }
+
   const startTime = Date.now();
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
@@ -200,13 +237,29 @@ export async function pingFirestoreDatabase(): Promise<{
       databaseId: firestoreInfo.databaseId,
       projectId: firestoreInfo.projectId
     };
-  } catch (error) {
+  } catch (error: any) {
     const latencyMs = Date.now() - startTime;
+    const code = typeof error?.code === 'string' ? error.code : '';
     const msg = error instanceof Error ? error.message : String(error);
+
+    // A permission-denied error comes directly from the live Cloud Firestore server, proving reachability
+    if (code === 'permission-denied' || msg.includes('Missing or insufficient permissions')) {
+      return {
+        success: true,
+        latencyMs,
+        message: `Database reachable & security rules active (${latencyMs}ms)`,
+        databaseId: firestoreInfo.databaseId,
+        projectId: firestoreInfo.projectId
+      };
+    }
+
     return {
       success: false,
       latencyMs,
-      message: msg.includes('offline') ? 'Database client offline (resilient cache active)' : msg,
+      message:
+        code === 'unavailable' || msg.includes('offline')
+          ? 'Database client offline (resilient cache active)'
+          : msg,
       databaseId: firestoreInfo.databaseId,
       projectId: firestoreInfo.projectId
     };
@@ -215,6 +268,8 @@ export async function pingFirestoreDatabase(): Promise<{
 
 // Connection test on boot
 export async function testConnection(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
   const result = await pingFirestoreDatabase();
   return result.success;
 }

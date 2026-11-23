@@ -1273,14 +1273,47 @@ export class FranchiseStorageService {
     const target = apps.find(a => a.id === id);
     if (!target) return false;
 
-    target.payments.unshift(payment);
+    const existingIdx = target.payments.findIndex(
+      (p) =>
+        p.id === payment.id ||
+        (payment.razorpayOrderId && p.razorpayOrderId === payment.razorpayOrderId)
+    );
+
+    if (existingIdx >= 0) {
+      const existing = target.payments[existingIdx];
+      // Never overwrite an already CAPTURED / SUCCESS payment with a downgraded attempt
+      const alreadyFinalized =
+        existing.razorpayStatus === 'CAPTURED' ||
+        existing.payuStatus === 'SUCCESS' ||
+        existing.status === 'completed';
+      if (!alreadyFinalized || payment.razorpayStatus === 'REFUND_INITIATED' || payment.razorpayStatus === 'REFUNDED') {
+        target.payments[existingIdx] = { ...existing, ...payment };
+      }
+    } else {
+      target.payments.unshift(payment);
+    }
+
+    // Update top-level payment metadata cleanly while NEVER auto-approving application.status
+    const nextPayStatus = payment.razorpayStatus || payment.payuStatus;
+    if (nextPayStatus) {
+      if (target.paymentStatus !== 'CAPTURED' && target.paymentStatus !== 'SUCCESS') {
+        target.paymentStatus = nextPayStatus;
+      } else if (nextPayStatus === 'REFUND_INITIATED' || nextPayStatus === 'REFUNDED' || nextPayStatus === 'REFUND_PENDING') {
+        target.paymentStatus = nextPayStatus;
+      }
+    }
+    if (payment.razorpayOrderId) target.razorpayOrderId = payment.razorpayOrderId;
+    if (payment.razorpayPaymentId) target.razorpayPaymentId = payment.razorpayPaymentId;
+    if (payment.txnId) target.txnId = payment.txnId;
+
     target.updatedAt = new Date().toISOString();
     localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+    syncApplicationToFirestore(target).catch(() => {});
 
     this.recordAuditLog(
       'PAYMENT_RECORDED',
       id,
-      `Processed payment ${payment.currency === 'INR' ? '₹' : '$'}${payment.amount.toLocaleString()} ${payment.currency} via ${payment.method}. Ref: ${payment.referenceCode} (Status: ${payment.status})`,
+      `Recorded payment ${payment.currency === 'INR' ? '₹' : '$'}${payment.amount.toLocaleString()} ${payment.currency} via ${payment.method}. Ref: ${payment.razorpayPaymentId || payment.razorpayOrderId || payment.referenceCode} (Status: ${nextPayStatus || payment.status})`,
       'applicant'
     );
 
@@ -1291,21 +1324,43 @@ export class FranchiseStorageService {
     appId: string,
     paymentId: string,
     newStatus: 'completed' | 'processing' | 'failed',
-    verifiedBy: string = 'director@truedealglobal.com'
+    verifiedBy: string = 'director@truedealglobal.com',
+    extra?: Partial<PaymentRecord>
   ): boolean {
     const apps = this.getApplications();
     const target = apps.find(a => a.id === appId);
     if (!target) return false;
 
-    const payment = target.payments.find(p => p.id === paymentId);
+    const payment = target.payments.find(
+      p => p.id === paymentId || (extra?.razorpayOrderId && p.razorpayOrderId === extra.razorpayOrderId)
+    );
     if (!payment) return false;
 
     payment.status = newStatus;
-    target.updatedAt = new Date().toISOString();
+    if (extra) {
+      Object.assign(payment, extra);
+    }
 
-    if (newStatus === 'completed' && payment.type === 'franchise_deposit') {
+    // Keep payment confirmation strictly separate from franchise application approval!
+    if (extra?.razorpayStatus) {
+      target.paymentStatus = extra.razorpayStatus;
+    } else if (extra?.payuStatus) {
+      target.paymentStatus = extra.payuStatus;
+    } else if (newStatus === 'completed') {
+      target.paymentStatus = payment.method === 'razorpay' ? 'CAPTURED' : 'SUCCESS';
+    } else if (newStatus === 'failed' && target.paymentStatus !== 'CAPTURED' && target.paymentStatus !== 'SUCCESS') {
+      target.paymentStatus = 'FAILED';
+    }
+
+    if (payment.razorpayOrderId) target.razorpayOrderId = payment.razorpayOrderId;
+    if (payment.razorpayPaymentId) target.razorpayPaymentId = payment.razorpayPaymentId;
+
+    // Only transition legacy bank deposits if application was already approved & contract issued
+    if (newStatus === 'completed' && payment.type === 'franchise_deposit' && target.status === 'contract_issued') {
       target.status = 'deposit_paid';
     }
+
+    target.updatedAt = new Date().toISOString();
 
     localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
     this.saveApplication(target, false);
@@ -1313,7 +1368,7 @@ export class FranchiseStorageService {
     this.recordAuditLog(
       'PAYMENT_STATUS_UPDATED',
       appId,
-      `Payment ${paymentId} status verified as ${newStatus} by ${verifiedBy}. Ref: ${payment.referenceCode}`,
+      `Payment ${paymentId} status updated to ${extra?.razorpayStatus || extra?.payuStatus || newStatus} by ${verifiedBy}. Ref: ${payment.razorpayPaymentId || payment.referenceCode}`,
       'director',
       verifiedBy
     );

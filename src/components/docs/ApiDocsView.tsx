@@ -21,6 +21,90 @@ interface EndpointDoc {
 const ENDPOINTS: EndpointDoc[] = [
   {
     method: 'POST',
+    path: '/api/create-order',
+    title: 'Create Razorpay Standard Checkout Order',
+    description:
+      'Validates applicant identity, looks up authoritative franchise package pricing & GST strictly on the server (plansCatalog.ts), prevents double payment on CAPTURED applications, creates a Razorpay Order in integer paise via official SDK, and returns public Key ID & Order ID.',
+    authNote: 'Requires Authorization: Bearer <FIREBASE_ID_TOKEN>',
+    sampleRequest: {
+      applicationId: 'TDG-2026-1042',
+      planId: 'plan_standard',
+      paymentPurpose: 'franchise_deposit',
+      applicantName: 'Applicant Name',
+      phone: '+919876543210',
+      termsAccepted: true
+    },
+    sampleResponse: {
+      ok: true,
+      order: {
+        id: 'order_Q1AbCdEfGhIjKl',
+        amount: 499900,
+        currency: 'INR',
+        keyId: 'rzp_test_U3VIznAN282H0E',
+        mode: 'test'
+      },
+      pricing: {
+        baseAmountINR: 4999,
+        gstAmountINR: 0,
+        finalAmountINR: 4999,
+        amountPaise: 499900
+      }
+    }
+  },
+  {
+    method: 'POST',
+    path: '/api/verify-payment',
+    title: 'Verify Razorpay Signature & Capture Status',
+    description:
+      'Verifies HMAC-SHA256(server_saved_order_id + "|" + razorpay_payment_id, RAZORPAY_KEY_SECRET) with timingSafeEqual, fetches payment via Razorpay API to verify order_id/amount/currency/captured status (never treating AUTHORIZED as CAPTURED), issues receipt REC-TDG-..., and sends SendGrid confirmation.',
+    authNote: 'Requires Authorization: Bearer <FIREBASE_ID_TOKEN> (Owner or Admin)',
+    sampleRequest: {
+      razorpay_order_id: 'order_Q1AbCdEfGhIjKl',
+      razorpay_payment_id: 'pay_Q1MnOpQrStUvWx',
+      razorpay_signature: '<HMAC_SHA256_SIGNATURE>',
+      applicationId: 'TDG-2026-1042'
+    },
+    sampleResponse: {
+      ok: true,
+      verified: true,
+      captured: true,
+      paymentStatus: 'CAPTURED',
+      message: 'Payment verified and captured successfully. Franchise application remains queued for administrative approval.'
+    }
+  },
+  {
+    method: 'POST',
+    path: '/api/webhooks/razorpay',
+    title: 'Razorpay Raw-Body Webhook Receiver',
+    description:
+      'Reads exact raw request body, verifies X-Razorpay-Signature against RAZORPAY_WEBHOOK_SECRET using timingSafeEqual, deduplicates by X-Razorpay-Event-Id, handles payment.authorized, payment.captured, payment.failed, order.paid, refund.created, refund.processed, and refund.failed, and protects CAPTURED monotonically.',
+    authNote: 'Verified via X-Razorpay-Signature (HMAC-SHA256 on raw body)',
+    sampleResponse: {
+      ok: true,
+      duplicate: false,
+      eventType: 'payment.captured',
+      paymentStatus: 'CAPTURED'
+    }
+  },
+  {
+    method: 'GET',
+    path: '/api/payments/razorpay/status',
+    title: 'Razorpay Config Readiness & Status Sync',
+    description:
+      'GET ?mode=config returns public readiness metadata (zero secrets). Authenticated GET ?applicationId=... or ?orderId=... returns owner/admin payment history. Authenticated POST logs checkout dismissal (CANCELLED) or failure (FAILED) without ever allowing CAPTURED escalation.',
+    authNote: 'Public for ?mode=config; Bearer token required for status/attempt logging',
+    sampleResponse: {
+      ok: true,
+      config: {
+        provider: 'razorpay_standard_checkout',
+        mode: 'test',
+        configured: true,
+        publicKeyId: 'rzp_test_U3VIznAN282H0E'
+      }
+    }
+  },
+  {
+    method: 'POST',
     path: '/api/payments/payu/initiate',
     title: 'Initiate PayU India Classic Hosted Checkout',
     description:
@@ -245,20 +329,22 @@ print(response.json())`;
           <span>TRUEDEAL GLOBAL OPC PVT LTD · Restricted Administrator API Reference</span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-slate-100">
-          PayU Classic Hosted Checkout &amp; Portal Server APIs
+          Razorpay Standard Checkout, PayU &amp; Portal Server APIs
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-3xl">
           Authoritative server-side endpoints deployed on{' '}
-          <code className="font-mono text-indigo-600 dark:text-indigo-400">{CANONICAL_BASE}</code>. All PayU merchant
-          salts, CRM keys, and SendGrid credentials remain strictly in server environment variables.
+          <code className="font-mono text-indigo-600 dark:text-indigo-400">{CANONICAL_BASE}</code>. All Razorpay key
+          secrets, webhook secrets, PayU salts, CRM keys, and SendGrid credentials remain strictly in server environment
+          variables.
         </p>
       </div>
 
       <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 flex items-start gap-3 text-xs text-emerald-900 dark:text-emerald-200">
         <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-emerald-600" />
         <div>
-          <strong>Zero Exposed Secrets:</strong> No PayU Salt, CRM keys, or SendGrid API keys are embedded in frontend
-          bundles. All sensitive endpoints cryptographically verify Firebase ID tokens via{' '}
+          <strong>Zero Exposed Secrets:</strong> No Razorpay Key Secret, Razorpay Webhook Secret, PayU Salt, CRM keys,
+          or SendGrid API keys are embedded in frontend bundles. All sensitive endpoints cryptographically verify
+          Firebase ID tokens via{' '}
           <code className="font-mono">Authorization: Bearer &lt;FIREBASE_ID_TOKEN&gt;</code>.
         </div>
       </div>

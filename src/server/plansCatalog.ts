@@ -154,36 +154,46 @@ export interface ServerFeeCalculation {
   gstRatePercent: number;
   gstAmountINR: number;
   totalAmountINR: number;
-  formattedAmount: string; // Always exact 2 decimals for PayU e.g. "4999.00"
+  baseAmountPaise: number;
+  gstAmountPaise: number;
+  totalAmountPaise: number;
+  formattedAmount: string; // Always exact 2 decimals e.g. "4999.00"
   currency: 'INR';
   gstMode: 'excluded' | 'included' | 'not_applicable';
 }
 
 /**
- * Computes authoritative server-side INR amount formatted strictly to 2 decimal places
- * as required by PayU SHA-512 hash validation.
+ * Computes authoritative server-side INR amount (rupees and paise) formatted strictly
+ * for both Razorpay Orders API (integer paise >= 100) and PayU SHA-512 hash validation.
  */
 export function calculateServerPlanAmount(planId: string): ServerFeeCalculation | null {
   const plan = getAuthoritativePlan(planId);
   if (!plan) return null;
 
-  // Server-controlled GST policy via optional environment override (default: base price without fabricating unconfirmed tax)
-  const rawMode = (process.env.PAYU_GST_MODE || 'not_applicable').toLowerCase().trim();
+  // Server-controlled GST policy via environment variables (default: base price without fabricating unconfirmed tax)
+  const rawMode = (process.env.RAZORPAY_GST_MODE || process.env.PAYU_GST_MODE || 'not_applicable')
+    .toLowerCase()
+    .trim();
   const gstMode: 'excluded' | 'included' | 'not_applicable' =
     rawMode === 'excluded' || rawMode === 'included' ? rawMode : 'not_applicable';
-  const gstRatePercent = gstMode === 'not_applicable' ? 0 : Number(process.env.PAYU_GST_RATE_PERCENT || '18');
+  const rawRate = Number(process.env.RAZORPAY_GST_RATE_PERCENT || process.env.PAYU_GST_RATE_PERCENT || '18');
+  const gstRatePercent = gstMode === 'not_applicable' || !Number.isFinite(rawRate) || rawRate < 0 ? 0 : rawRate;
 
   let baseAmountINR = plan.priceINR;
   let gstAmountINR = 0;
   let totalAmountINR = plan.priceINR;
 
   if (gstMode === 'excluded' && gstRatePercent > 0) {
-    gstAmountINR = Math.round((baseAmountINR * gstRatePercent) / 100 * 100) / 100;
+    gstAmountINR = Math.round(((baseAmountINR * gstRatePercent) / 100) * 100) / 100;
     totalAmountINR = Math.round((baseAmountINR + gstAmountINR) * 100) / 100;
   } else if (gstMode === 'included' && gstRatePercent > 0) {
     baseAmountINR = Math.round((totalAmountINR / (1 + gstRatePercent / 100)) * 100) / 100;
     gstAmountINR = Math.round((totalAmountINR - baseAmountINR) * 100) / 100;
   }
+
+  const totalAmountPaise = Math.round(totalAmountINR * 100);
+  const baseAmountPaise = Math.round(baseAmountINR * 100);
+  const gstAmountPaise = Math.max(0, totalAmountPaise - baseAmountPaise);
 
   return {
     planId: plan.id,
@@ -192,8 +202,12 @@ export function calculateServerPlanAmount(planId: string): ServerFeeCalculation 
     gstRatePercent,
     gstAmountINR,
     totalAmountINR,
+    baseAmountPaise,
+    gstAmountPaise,
+    totalAmountPaise,
     formattedAmount: totalAmountINR.toFixed(2),
     currency: 'INR',
     gstMode
   };
 }
+
