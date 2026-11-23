@@ -32,11 +32,12 @@ import {
 import { SyncStatusMonitorModal } from './components/common/SyncStatusMonitorModal';
 import { EmailPreviewModal } from './components/common/EmailPreviewModal';
 import { NotificationsDrawer } from './components/common/NotificationsDrawer';
+import { PaymentModal } from './components/common/PaymentModal';
 import { WhatsAppSupportWidget } from './components/common/WhatsAppSupportWidget';
-import { FranchiseStorageService } from './services/storage';
+import { FranchiseStorageService, getPlanById } from './services/storage';
 import { NotificationService } from './services/notificationService';
 import { updateDocumentSeo } from './utils/seo';
-import { UserRole, AppNotification, EmailNotification, SyncQueueItem, Currency } from './types/franchise';
+import { UserRole, AppNotification, EmailNotification, SyncQueueItem, Currency, FranchiseApplication } from './types/franchise';
 
 const PATH_TO_TAB: Record<string, string> = {
   '/': 'plans',
@@ -134,6 +135,7 @@ export default function App() {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState(false);
+  const [quickPayApp, setQuickPayApp] = useState<FranchiseApplication | null>(null);
 
   // Live collections
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -308,6 +310,87 @@ export default function App() {
     }
   };
 
+  /**
+   * Direct Razorpay Checkout launcher from Franchise Plans & Pricing pages.
+   * Reuses an existing unpaid application for the signed-in user & plan, or creates
+   * a real PAYMENT_PENDING application reference ID so Razorpay order binding is authentic.
+   */
+  const handleQuickPayRazorpay = (planId: string) => {
+    const plan = getPlanById(planId) || FranchiseStorageService.getPlans()[0];
+    if (!plan) return;
+    const apps = FranchiseStorageService.getApplications();
+    const userEmail = currentUser?.email?.toLowerCase();
+    const userUid = currentUser?.uid;
+
+    const existingUnpaid = apps.find(
+      (a) =>
+        a.planId === plan.id &&
+        a.paymentStatus !== 'CAPTURED' &&
+        a.paymentStatus !== 'SUCCESS' &&
+        ((userUid && a.userId === userUid) ||
+          (userEmail && a.applicant.email.toLowerCase() === userEmail))
+    );
+
+    if (existingUnpaid) {
+      setSelectedAppId(existingUnpaid.id);
+      setQuickPayApp(existingUnpaid);
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const generatedId = `TDG-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const newApp: FranchiseApplication = {
+      id: generatedId,
+      userId: currentUser?.uid,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      applicant: {
+        fullName: currentUser?.displayName || 'Franchise Applicant',
+        email: currentUser?.email || 'applicant@truedealglobal.com',
+        phone: '+91-9317194033',
+        companyName: '',
+        country: 'India',
+        stateProvince: 'Uttar Pradesh',
+        city: 'Ghaziabad',
+        postalCode: '201001',
+        entityType: 'individual'
+      },
+      financials: {
+        liquidCapital: plan.priceINR,
+        netWorth: plan.priceINR * 2,
+        creditScoreTier: '700_749',
+        fundingSource: 'cash_savings'
+      },
+      planId: plan.id,
+      amount: plan.priceINR,
+      paymentStatus: 'PAYMENT_PENDING',
+      territoryRequested: 'India — Primary Territory',
+      preferredStartDate: nowIso.slice(0, 10),
+      operationalExperienceYears: 1,
+      businessBackgroundSummary: `Direct Razorpay Checkout registration for ${plan.title}.`,
+      status: 'PAYMENT_PENDING',
+      automatedEvaluation: {
+        score: 75,
+        liquidityStatus: 'pass',
+        netWorthStatus: 'pass',
+        creditStatus: 'pass',
+        territoryAvailable: true,
+        backgroundCheckPassed: true,
+        preliminaryVerdict: 'manual_review_required',
+        reasons: ['Initiated via direct Razorpay Checkout; pending manual KYC & agreement execution.'],
+        calculatedAt: nowIso
+      },
+      documents: [],
+      payments: [],
+      reviewNotes: []
+    };
+
+    FranchiseStorageService.saveApplication(newApp);
+    setSelectedAppId(newApp.id);
+    setQuickPayApp(newApp);
+    refreshAllData();
+  };
+
   const unreadNotifsCount = notifications.filter((n) => !n.read).length;
 
   return (
@@ -357,6 +440,7 @@ export default function App() {
             currency={currency}
             onToggleCurrency={setCurrency}
             onNavigate={handleNavigate}
+            onQuickPayRazorpay={handleQuickPayRazorpay}
             onSelectPlan={(planId) => {
               setWizardPlanId(planId);
               handleNavigate('apply');
@@ -367,6 +451,7 @@ export default function App() {
         {currentTab === 'pricing' && (
           <PricingTransparencyPage
             onNavigate={handleNavigate}
+            onQuickPayRazorpay={handleQuickPayRazorpay}
             onSelectPlan={(planId) => {
               setWizardPlanId(planId);
               handleNavigate('apply');
@@ -489,6 +574,36 @@ export default function App() {
           handleNavigate('tracker');
         }}
       />
+
+      {/* Direct Razorpay Express Checkout Modal (from Plans / Pricing cards) */}
+      {quickPayApp && (
+        <PaymentModal
+          isOpen={true}
+          onClose={() => setQuickPayApp(null)}
+          application={
+            currentUser && !quickPayApp.userId
+              ? {
+                  ...quickPayApp,
+                  userId: currentUser.uid,
+                  applicant: {
+                    ...quickPayApp.applicant,
+                    fullName: currentUser.displayName || quickPayApp.applicant.fullName,
+                    email: currentUser.email || quickPayApp.applicant.email
+                  }
+                }
+              : quickPayApp
+          }
+          paymentType="franchise_deposit"
+          amount={getPlanById(quickPayApp.planId)?.priceINR ?? quickPayApp.amount ?? 4999}
+          currency="INR"
+          currentUser={currentUser}
+          onSignInGoogle={handleSignInGoogle}
+          onNavigate={handleNavigate}
+          onPaymentSuccess={() => {
+            refreshAllData();
+          }}
+        />
+      )}
 
       {/* Instant WhatsApp & Helpline Floating Connector */}
       <WhatsAppSupportWidget />

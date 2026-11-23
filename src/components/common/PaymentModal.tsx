@@ -119,6 +119,7 @@ export function PaymentModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setActiveMode('razorpay');
     let active = true;
     setLoadingRzpConfig(true);
     setLoadingPayuConfig(true);
@@ -921,44 +922,51 @@ export function PaymentModal({
               </div>
             </div>
 
-            {/* Channel Tabs: Razorpay Standard Checkout (Primary) | PayU Hosted Checkout | Corporate Bank / UPI */}
-            <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
+            {/* Channel Tabs: Razorpay Standard Checkout (Primary) | Corporate Bank / UPI | Optional PayU (only if configured) */}
+            <div className={`grid ${payuConfig?.configured ? 'grid-cols-3' : 'grid-cols-2'} gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl`}>
               <button
                 type="button"
                 onClick={() => setActiveMode('razorpay')}
-                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2.5 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeMode === 'razorpay'
-                    ? 'bg-white dark:bg-slate-700 text-indigo-700 dark:text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                <span>Razorpay</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveMode('payu_hosted')}
-                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                  activeMode === 'payu_hosted'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                }`}
-              >
-                <CreditCard className="w-3.5 h-3.5 shrink-0" />
-                <span>PayU Hosted Checkout</span>
+                <span>Razorpay Checkout</span>
+                {rzpConfig?.configured && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/20 uppercase">
+                    {rzpConfig.mode === 'live' ? 'Live' : 'Active'}
+                  </span>
+                )}
               </button>
               <button
                 type="button"
                 onClick={() => setActiveMode('bank_upi')}
-                className={`py-2 px-2 text-[11px] sm:text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                className={`py-2.5 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
                   activeMode === 'bank_upi'
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5 shrink-0" />
-                <span>Bank / UPI</span>
+                <span>Corporate Bank / UPI</span>
               </button>
+              {payuConfig?.configured && (
+                <button
+                  type="button"
+                  onClick={() => setActiveMode('payu_hosted')}
+                  className={`py-2.5 px-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    activeMode === 'payu_hosted'
+                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5 shrink-0" />
+                  <span>PayU Hosted Checkout</span>
+                </button>
+              )}
             </div>
 
             {activeMode === 'razorpay' ? (

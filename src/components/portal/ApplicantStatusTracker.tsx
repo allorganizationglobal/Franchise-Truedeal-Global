@@ -760,7 +760,7 @@ export function ApplicantStatusTracker({
                           Fund Initial Franchise License Joining Fee
                         </span>
                         <span className="text-[11px] text-emerald-800 dark:text-emerald-300 leading-tight block">
-                          Joining fee: {currencySymbol}{depositAmount.toLocaleString()} {appCurrency} ({appCurrency === 'USD' ? 'USD +10% International Licensing' : 'UPI QR / Bank of Baroda IMPS'}).
+                          Joining fee: {currencySymbol}{depositAmount.toLocaleString()} {appCurrency} (Razorpay Standard Checkout: UPI, Cards, NetBanking, Wallets or Bank of Baroda IMPS).
                         </span>
                       </div>
                     </div>
@@ -770,7 +770,7 @@ export function ApplicantStatusTracker({
                         Beneficiary: TRUEDEAL GLOBAL OPC PVT LTD
                       </div>
                       <div className="text-slate-600 dark:text-slate-400 font-mono text-[10px]">
-                        BANK OF BARODA · A/C: 26290200001514 · IFSC: BARB0NOIDAX
+                        RAZORPAY STANDARD CHECKOUT · BANK OF BARODA A/C: 26290200001514
                       </div>
                     </div>
 
@@ -778,16 +778,16 @@ export function ApplicantStatusTracker({
                       <button
                         type="button"
                         onClick={() => setShowPaymentModal(true)}
-                        className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors font-medium"
+                        className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                       >
-                        Pay License Fee ({currencySymbol}{depositAmount.toLocaleString()} {appCurrency})
+                        Pay via Razorpay ({currencySymbol}{depositAmount.toLocaleString()} {appCurrency})
                       </button>
                       <button
                         type="button"
                         onClick={() => setShowPaymentModal(true)}
-                        className="py-2 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition-colors"
+                        className="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
                       >
-                        Bank QR
+                        Bank / UPI
                       </button>
                     </div>
                   </div>

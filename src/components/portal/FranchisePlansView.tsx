@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   ArrowRight,
   Globe,
@@ -24,7 +24,9 @@ import {
   Copy,
   QrCode,
   Phone,
-  Mail
+  Mail,
+  CreditCard,
+  Lock
 } from 'lucide-react';
 import { FranchiseStorageService, USD_INR_RATE, USD_SURCHARGE_PCT } from '../../services/storage';
 import { calculateFeeBreakdownINR } from '../../config/complianceConfig';
@@ -37,6 +39,7 @@ interface FranchisePlansViewProps {
   currency: Currency;
   onToggleCurrency: (c: Currency) => void;
   onSelectPlan: (planId: string) => void;
+  onQuickPayRazorpay?: (planId: string) => void;
   onNavigate?: (tab: string) => void;
 }
 
@@ -44,6 +47,7 @@ export function FranchisePlansView({
   currency,
   onToggleCurrency,
   onSelectPlan,
+  onQuickPayRazorpay,
   onNavigate
 }: FranchisePlansViewProps) {
   const { language } = useLanguage();
@@ -51,6 +55,25 @@ export function FranchisePlansView({
   const complianceConfig = FranchiseStorageService.getComplianceConfig();
   const [selectedPlanId, setSelectedPlanId] = useState<string>('plan_standard');
   const [filterCategory, setFilterCategory] = useState<'all' | 'starter' | 'growth' | 'authority' | 'master'>('all');
+  const [razorpayStatus, setRazorpayStatus] = useState<{ configured: boolean; mode: 'test' | 'live' } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/payments/razorpay/status?mode=config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && data?.config) {
+          setRazorpayStatus({
+            configured: Boolean(data.config.configured),
+            mode: data.config.mode === 'live' ? 'live' : 'test'
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Illustrative Commission Estimator (Not a guarantee of income)
   const [calcMonthlyDeals, setCalcMonthlyDeals] = useState<number>(8);
@@ -270,6 +293,49 @@ export function FranchisePlansView({
             </button>
           ))}
         </div>
+
+        {/* Official Razorpay Online Payment Gateway Strip */}
+        <div className="mt-4 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-indigo-600/10 via-sky-500/10 to-emerald-500/10 dark:from-indigo-950/60 dark:via-slate-900 dark:to-emerald-950/40 border border-indigo-200 dark:border-indigo-800/80 flex flex-col md:flex-row items-center justify-between gap-4 text-left shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <CreditCard className="w-5 h-5" />
+            </div>
+            <div className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-black text-slate-900 dark:text-white">
+                  Razorpay Standard Web Checkout Enabled
+                </span>
+                <span
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded uppercase ${
+                    razorpayStatus?.mode === 'live'
+                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300'
+                  }`}
+                >
+                  {razorpayStatus?.configured
+                    ? razorpayStatus.mode === 'live'
+                      ? 'LIVE GATEWAY ACTIVE'
+                      : 'TEST MODE ACTIVE'
+                    : 'RAZORPAY SECURED'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                Pay securely via <strong>UPI, Debit/Credit Cards, NetBanking &amp; Wallets</strong> powered by official Razorpay
+                Checkout with server-side HMAC-SHA256 verification and instant receipt generation.
+              </p>
+            </div>
+          </div>
+          {onQuickPayRazorpay && (
+            <button
+              type="button"
+              onClick={() => onQuickPayRazorpay(selectedPlanId || 'plan_standard')}
+              className="w-full md:w-auto shrink-0 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+            >
+              <Lock className="w-3.5 h-3.5" />
+              <span>Pay Now via Razorpay</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* 8 Official TrueDeal Global Franchise Plan Cards Grid - Perfectly Justified for Mobile, Tablet, Laptop, and Desktop */}
@@ -360,8 +426,8 @@ export function FranchisePlansView({
                 </div>
               </div>
 
-              {/* Apply Button */}
-              <div className="pt-2">
+              {/* Apply & Direct Razorpay Checkout Buttons */}
+              <div className="pt-2 space-y-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -375,6 +441,19 @@ export function FranchisePlansView({
                   <span>{language === 'hi' ? `${plan.title} चुनें` : `Join ${plan.title}`}</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
+                {onQuickPayRazorpay && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedPlanId(plan.id);
+                      onQuickPayRazorpay(plan.id);
+                    }}
+                    className="w-full py-2 px-3 text-[11px] font-bold rounded-xl border border-indigo-200 dark:border-indigo-700/70 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>{language === 'hi' ? 'Razorpay से भुगतान करें' : 'Pay Now via Razorpay'}</span>
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -682,7 +761,8 @@ export function FranchisePlansView({
                 TRUEDEAL GLOBAL OPC PVT LTD
               </h3>
               <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                All domestic franchise fees and capital deposits are accepted exclusively through our verified Bank of Baroda corporate current account or encrypted gateway rails.
+                Online franchise package payments are processed securely via our official <strong>Razorpay Standard Web Checkout</strong>{' '}
+                (UPI, Cards, NetBanking, Wallets) with server-side HMAC verification, or via direct transfer to our verified Bank of Baroda corporate current account.
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-xs text-left">

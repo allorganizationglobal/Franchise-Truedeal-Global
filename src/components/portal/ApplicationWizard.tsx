@@ -1155,7 +1155,7 @@ export function ApplicationWizard({
                       Official Corporate Bank Account ({complianceConfig.legalName})
                     </span>
                     <span className="text-[10px] font-semibold bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 px-2 py-0.5 rounded">
-                      Razorpay Checkout · PayU · Corporate Bank Supported
+                      Razorpay Standard Checkout · Corporate Bank Supported
                     </span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

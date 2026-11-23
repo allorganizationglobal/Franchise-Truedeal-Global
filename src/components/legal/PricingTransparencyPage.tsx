@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
   IndianRupee,
   CheckCircle2,
@@ -6,19 +7,40 @@ import {
   FileText,
   ArrowRight,
   Info,
-  ShieldCheck
+  ShieldCheck,
+  Lock
 } from 'lucide-react';
 import { FranchiseStorageService } from '../../services/storage';
 import { calculateFeeBreakdownINR, getPlanTransparencyDefaults } from '../../config/complianceConfig';
 
 interface PricingTransparencyPageProps {
   onSelectPlan: (planId: string) => void;
+  onQuickPayRazorpay?: (planId: string) => void;
   onNavigate: (tab: string) => void;
 }
 
-export function PricingTransparencyPage({ onSelectPlan, onNavigate }: PricingTransparencyPageProps) {
+export function PricingTransparencyPage({ onSelectPlan, onQuickPayRazorpay, onNavigate }: PricingTransparencyPageProps) {
   const config = FranchiseStorageService.getComplianceConfig();
   const plans = FranchiseStorageService.getPlans();
+  const [rzpStatus, setRzpStatus] = useState<{ configured: boolean; mode: 'test' | 'live' } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/payments/razorpay/status?mode=config')
+      .then((res) => res.json())
+      .then((data) => {
+        if (active && data?.config) {
+          setRzpStatus({
+            configured: Boolean(data.config.configured),
+            mode: data.config.mode === 'live' ? 'live' : 'test'
+          });
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-10">
@@ -65,12 +87,16 @@ export function PricingTransparencyPage({ onSelectPlan, onNavigate }: PricingTra
         </div>
 
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-1.5">
-          <div className="text-xs font-bold uppercase text-slate-400">Payment Gateway Status</div>
-          <div className="text-sm font-bold text-amber-700 dark:text-amber-400">
-            Online Gateway Verification Pending
+          <div className="text-xs font-bold uppercase text-slate-400">Online Payment Gateway</div>
+          <div className="text-sm font-bold text-emerald-700 dark:text-emerald-400">
+            {rzpStatus?.configured
+              ? rzpStatus.mode === 'live'
+                ? 'Razorpay Standard Checkout (Live Active)'
+                : 'Razorpay Standard Checkout (Test Mode Active)'
+              : 'Razorpay Standard Web Checkout Integrated'}
           </div>
           <p className="text-xs text-slate-600 dark:text-slate-400">
-            Live Razorpay online checkout is currently disabled pending merchant onboarding approval. Verified corporate bank transfer references are reconciled manually.
+            Accepts UPI, Debit/Credit Cards, NetBanking &amp; Wallets via official Razorpay Checkout with server-side HMAC-SHA256 verification, plus verified Bank of Baroda corporate transfers.
           </p>
         </div>
       </div>
@@ -127,14 +153,26 @@ export function PricingTransparencyPage({ onSelectPlan, onNavigate }: PricingTra
                       {defaults.activationTimeline}
                     </td>
                     <td className="py-4 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onSelectPlan(plan.id)}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer"
-                      >
-                        <span>Apply</span>
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="inline-flex items-center gap-1.5 justify-end">
+                        {onQuickPayRazorpay && (
+                          <button
+                            type="button"
+                            onClick={() => onQuickPayRazorpay(plan.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer"
+                          >
+                            <Lock className="w-3 h-3" />
+                            <span>Razorpay</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onSelectPlan(plan.id)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          <span>Apply</span>
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -254,14 +292,26 @@ export function PricingTransparencyPage({ onSelectPlan, onNavigate }: PricingTra
                       Franchise Terms
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onSelectPlan(plan.id)}
-                    className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-                  >
-                    <span>Select & Apply</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {onQuickPayRazorpay && (
+                      <button
+                        type="button"
+                        onClick={() => onQuickPayRazorpay(plan.id)}
+                        className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Pay via Razorpay</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onSelectPlan(plan.id)}
+                      className="px-4 py-2 rounded-xl bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <span>Select &amp; Apply</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               </div>
             );
