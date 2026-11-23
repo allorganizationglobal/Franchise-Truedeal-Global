@@ -1535,7 +1535,6 @@ export function ApplicationWizard({
           onPaymentSuccess={(rec) => {
             setPaymentCompleted(true);
             setPaymentRecord(rec);
-            setShowPaymentModal(false);
           }}
         />
       )}

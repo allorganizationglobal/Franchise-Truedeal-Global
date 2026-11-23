@@ -29,6 +29,7 @@ import {
   RazorpayCheckoutFailedEvent,
   RazorpayCheckoutSuccessResponse
 } from '../../utils/razorpayCheckout';
+import { OfficialReceiptCard } from './OfficialReceiptCard';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -413,6 +414,15 @@ export function PaymentModal({
       const pricing = createData.pricing;
       const checkoutToken: string | undefined = typeof createData.checkoutToken === 'string' ? createData.checkoutToken : undefined;
 
+      if (checkoutToken) {
+        try {
+          sessionStorage.setItem(`tdg_rzp_token_${order.id}`, checkoutToken);
+          sessionStorage.setItem(`tdg_rzp_latest_app_${application.id}`, JSON.stringify({ orderId: order.id, checkoutToken }));
+        } catch {
+          // Non-blocking sessionStorage cache
+        }
+      }
+
       // Record created order in local tracker history immediately
       persistLocalRazorpayAttempt(order.id, 'processing', 'CREATED', {
         amountINR: pricing?.finalAmountINR ?? feeBreakdown.totalPayableINR,
@@ -756,91 +766,37 @@ export function PaymentModal({
 
         {verifiedRazorpayPayment ? (
           /* STRICTLY VERIFIED & CAPTURED RAZORPAY RECEIPT VIEW */
-          <div className="py-2 text-center space-y-5">
-            <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto">
-              <CheckCircle2 className="w-8 h-8" />
-            </div>
-
-            <div>
-              <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-                Payment Successful
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Verified &amp; captured via Razorpay · Receipt #{verifiedRazorpayPayment.receiptNumber}
-              </p>
-            </div>
-
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/80 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2.5 text-xs text-left">
-              <div className="flex justify-between">
-                <span className="text-slate-500">Legal Entity</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">{config.legalName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Application Reference</span>
-                <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{application.id}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Franchise Package</span>
-                <span className="font-semibold text-slate-900 dark:text-slate-100">{plan?.title || application.planId}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Verified Paid Amount</span>
-                <span className="font-bold font-mono text-emerald-700 dark:text-emerald-400">
-                  ₹{verifiedRazorpayPayment.amount.toLocaleString('en-IN')} INR
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Razorpay Payment ID</span>
-                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">
-                  {verifiedRazorpayPayment.razorpayPaymentId}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-500">Razorpay Order ID</span>
-                <span className="font-mono text-slate-700 dark:text-slate-300">
-                  {verifiedRazorpayPayment.razorpayOrderId}
-                </span>
-              </div>
-              {verifiedRazorpayPayment.paymentMethodDetails && (
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Payment Method</span>
-                  <span className="font-medium text-slate-900 dark:text-slate-100">
-                    {verifiedRazorpayPayment.paymentMethodDetails}
-                  </span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-slate-500">Capture &amp; Signature Status</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">CAPTURED · HMAC Verified</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 text-[11px] text-indigo-900 dark:text-indigo-200 text-left flex items-start gap-2">
-              <Info className="w-4 h-4 shrink-0 mt-0.5 text-indigo-600" />
-              <span>
-                <strong>Important:</strong> Payment confirmation is separate from franchise approval. Your application
-                remains queued for administrative compliance verification and Franchise Agreement execution.
-              </span>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="flex-1 py-2.5 px-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-semibold rounded-xl flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                <span>Print Receipt</span>
-              </button>
-              <button
-                type="button"
-                onClick={onClose}
-                className="flex-1 py-2.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl cursor-pointer"
-              >
-                Return to Portal
-              </button>
-            </div>
-          </div>
+          <OfficialReceiptCard
+            receipt={{
+              receiptNumber: verifiedRazorpayPayment.receiptNumber,
+              applicationId: application.id,
+              applicantName: payerName.trim() || application.applicant.fullName || 'Franchise Applicant',
+              applicantEmail: (currentUser?.email || payerEmail || application.applicant.email || '').trim(),
+              applicantPhone: (payerPhone || application.applicant.phone || '').trim(),
+              planId: application.planId,
+              planTitle: plan?.title || application.planId,
+              amountINR: verifiedRazorpayPayment.amount,
+              baseAmountINR: verifiedRazorpayPayment.baseAmount,
+              gstAmountINR: verifiedRazorpayPayment.gstAmount,
+              razorpayOrderId: verifiedRazorpayPayment.razorpayOrderId,
+              razorpayPaymentId: verifiedRazorpayPayment.razorpayPaymentId,
+              referenceCode: verifiedRazorpayPayment.referenceCode,
+              paymentMethodDetails: verifiedRazorpayPayment.paymentMethodDetails,
+              timestamp: verifiedRazorpayPayment.timestamp,
+              signatureVerified: true,
+              gateway: 'razorpay'
+            }}
+            onOpenTracker={
+              onNavigate
+                ? () => {
+                    onClose();
+                    onNavigate('tracker');
+                  }
+                : undefined
+            }
+            onClose={onClose}
+            closeLabel="Return to Portal"
+          />
         ) : !submittedPayment ? (
           <div className="space-y-5">
             {/* Pre-Payment Summary Header */}

@@ -1,11 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  CheckCircle2,
   XCircle,
   Clock,
   AlertTriangle,
   RefreshCw,
-  Printer,
   ArrowRight,
   ShieldCheck,
   LogIn,
@@ -16,6 +14,7 @@ import { getFirebaseIdToken } from '../../services/firebase';
 import { FranchiseStorageService } from '../../services/storage';
 import { RazorpayPaymentStatus, PaymentRecord } from '../../types/franchise';
 import { PaymentModal } from '../common/PaymentModal';
+import { OfficialReceiptCard } from '../common/OfficialReceiptCard';
 
 interface PaymentResultViewProps {
   currentUser?: FirebaseUser | null;
@@ -31,8 +30,10 @@ interface VerifiedRazorpayPayload {
   userId: string;
   applicantName: string;
   email: string;
+  phone?: string;
   planId: string;
-  planName: string;
+  planTitle?: string;
+  planName?: string;
   razorpayOrderId: string;
   razorpayPaymentId?: string;
   finalAmountINR: number;
@@ -61,6 +62,18 @@ export function PaymentResultView({
   const orderId = params.get('orderId') || params.get('razorpay_order_id') || params.get('txnid') || '';
   const applicationIdParam = params.get('applicationId') || '';
   const reasonParam = params.get('reason') || '';
+
+  const storedCheckoutToken = (() => {
+    if (typeof window === 'undefined') return '';
+    const fromQuery = params.get('checkoutToken') || '';
+    if (fromQuery) return fromQuery;
+    if (orderId) {
+      return sessionStorage.getItem(`tdg_rzp_token_${orderId}`) || '';
+    }
+    return '';
+  })();
+
+  const canVerifyDirectly = Boolean(currentUser || (orderId && storedCheckoutToken));
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -125,7 +138,7 @@ export function PaymentResultView({
       return;
     }
 
-    if (!currentUser) {
+    if (!canVerifyDirectly) {
       setLoading(false);
       return;
     }
@@ -138,18 +151,20 @@ export function PaymentResultView({
     setErrorMsg(null);
 
     try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) {
-        setErrorMsg('Please sign in to fetch your verified Razorpay payment status.');
+      const idToken = currentUser ? await getFirebaseIdToken() : null;
+      const headers: Record<string, string> = {};
+      if (idToken) headers.Authorization = `Bearer ${idToken}`;
+      if (storedCheckoutToken) headers['X-Checkout-Token'] = storedCheckoutToken;
+
+      if (!idToken && !storedCheckoutToken) {
+        setErrorMsg('Please sign in or open your Application Tracker to verify your Razorpay payment status.');
         return;
       }
 
       const query = orderId
         ? `orderId=${encodeURIComponent(orderId)}`
         : `applicationId=${encodeURIComponent(applicationIdParam)}`;
-      const res = await fetch(`/api/payments/razorpay/status?${query}`, {
-        headers: { Authorization: `Bearer ${idToken}` }
-      });
+      const res = await fetch(`/api/payments/razorpay/status?${query}`, { headers });
       const data = await res.json().catch(() => null);
 
       const resolvedPayment: VerifiedRazorpayPayload | null =
@@ -168,7 +183,7 @@ export function PaymentResultView({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [orderId, applicationIdParam, currentUser, syncVerifiedPaymentToLocalApp]);
+  }, [orderId, applicationIdParam, canVerifyDirectly, currentUser, storedCheckoutToken, syncVerifiedPaymentToLocalApp]);
 
   useEffect(() => {
     fetchAuthoritativeStatus(false);
@@ -184,29 +199,39 @@ export function PaymentResultView({
   return (
     <div className="max-w-2xl mx-auto py-12 px-4 sm:px-6 space-y-6">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-xl p-6 sm:p-8 space-y-6">
-        {!currentUser ? (
+        {!canVerifyDirectly ? (
           <div className="text-center space-y-4 py-4">
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto">
               <ShieldCheck className="w-7 h-7" />
             </div>
             <h1 className="text-xl font-bold text-slate-900 dark:text-white">
-              Sign In to Verify Your Razorpay Payment Status
+              Verify Your Razorpay Payment Status
             </h1>
             <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
               For your security, TRUEDEAL GLOBAL never trusts URL query parameters as proof of payment. Sign in with your
-              applicant Google account to load the server-verified transaction status for{' '}
+              Google account or open your Application Tracker with your Application Reference ID &amp; email to inspect{' '}
               <code className="font-mono font-bold text-slate-800 dark:text-slate-200">{orderId || applicationIdParam || 'your order'}</code>.
             </p>
-            {onSignInGoogle && (
+            <div className="flex flex-wrap justify-center gap-2.5">
+              {onSignInGoogle && (
+                <button
+                  type="button"
+                  onClick={onSignInGoogle}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer"
+                >
+                  <LogIn className="w-4 h-4" />
+                  <span>Sign In with Google</span>
+                </button>
+              )}
               <button
                 type="button"
-                onClick={onSignInGoogle}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer"
+                onClick={() => onNavigate('tracker')}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer"
               >
-                <LogIn className="w-4 h-4" />
-                <span>Sign In with Google</span>
+                <span>Open Application Tracker</span>
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
-            )}
+            </div>
           </div>
         ) : loading ? (
           <div className="text-center py-10 space-y-3">
@@ -216,15 +241,33 @@ export function PaymentResultView({
             </h2>
             <p className="text-xs text-slate-500">Checking cryptographic signature and authoritative capture status.</p>
           </div>
+        ) : isSuccess && payment ? (
+          <OfficialReceiptCard
+            receipt={{
+              receiptNumber: payment.receiptNumber || `REC-TDG-${new Date().getFullYear()}-${payment.razorpayOrderId.slice(-6).toUpperCase()}`,
+              applicationId: payment.applicationId,
+              applicantName: payment.applicantName,
+              applicantEmail: payment.email,
+              applicantPhone: payment.phone,
+              planId: payment.planId,
+              planTitle: payment.planTitle || payment.planName || payment.planId,
+              amountINR: payment.finalAmountINR,
+              baseAmountINR: payment.baseAmountINR,
+              gstAmountINR: payment.gstAmountINR,
+              razorpayOrderId: payment.razorpayOrderId,
+              razorpayPaymentId: payment.razorpayPaymentId,
+              paymentMethodDetails: payment.paymentMethodDetails,
+              timestamp: payment.paymentTimestamp || payment.updatedAt || payment.createdAt,
+              signatureVerified: payment.signatureVerified !== false,
+              gateway: 'razorpay'
+            }}
+            onOpenTracker={() => onNavigateToTracker(payment.applicationId)}
+          />
         ) : (
           <>
             {/* Status Header */}
             <div className="text-center space-y-3">
-              {isSuccess ? (
-                <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-8 h-8" />
-                </div>
-              ) : isFailed ? (
+              {isFailed ? (
                 <div className="w-16 h-16 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
                   <XCircle className="w-8 h-8" />
                 </div>
@@ -236,39 +279,33 @@ export function PaymentResultView({
 
               <div>
                 <h1 className="text-2xl font-black text-slate-900 dark:text-white">
-                  {isSuccess
-                    ? 'Payment Verified & Captured'
-                    : isFailed
+                  {isFailed
                     ? `Payment ${payment?.paymentStatus || 'Failed'}`
                     : 'Payment Verification Pending'}
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  {isSuccess
-                    ? 'Your franchise fee payment has been independently verified & captured via Razorpay.'
-                    : isFailed
+                  {isFailed
                     ? payment?.failureReason || 'Your Razorpay transaction did not complete. You can safely retry below.'
                     : 'We are awaiting final capture confirmation from Razorpay. Refresh live status below.'}
                 </p>
               </div>
             </div>
 
-            {(errorMsg || reasonParam) && !isSuccess && (
+            {(errorMsg || reasonParam) && (
               <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
                 <span>{errorMsg || `Gateway notice: ${reasonParam.replace(/_/g, ' ')}`}</span>
               </div>
             )}
 
-            {/* Official Verified Receipt / Transaction Details Card */}
+            {/* Pending / Failed Transaction Details Card */}
             {payment && (
               <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
                 <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
                   <span className="font-bold text-slate-900 dark:text-white">{complianceConfig.legalName}</span>
                   <span
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                      isSuccess
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        : isFailed
+                      isFailed
                         ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                         : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                     }`}
@@ -277,21 +314,15 @@ export function PaymentResultView({
                   </span>
                 </div>
 
-                {isSuccess && payment.receiptNumber && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Official Receipt No</span>
-                    <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                      {payment.receiptNumber}
-                    </span>
-                  </div>
-                )}
                 <div className="flex justify-between">
                   <span className="text-slate-500">Application ID</span>
                   <span className="font-mono font-bold text-slate-900 dark:text-white">{payment.applicationId}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Franchise Plan</span>
-                  <span className="font-semibold text-slate-900 dark:text-white">{payment.planName}</span>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {payment.planTitle || payment.planName || payment.planId}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Amount</span>
@@ -309,37 +340,12 @@ export function PaymentResultView({
                     <span className="font-mono text-slate-800 dark:text-slate-200">{payment.razorpayPaymentId}</span>
                   </div>
                 )}
-                {payment.paymentMethodDetails && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Payment Mode</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200">{payment.paymentMethodDetails}</span>
-                  </div>
-                )}
-                {payment.paymentTimestamp && (
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Verified Timestamp</span>
-                    <span className="text-slate-800 dark:text-slate-200">
-                      {new Date(payment.paymentTimestamp).toLocaleString('en-IN')}
-                    </span>
-                  </div>
-                )}
               </div>
             )}
 
             {/* Action Buttons */}
             <div className="flex flex-wrap gap-2.5 justify-center pt-2">
-              {isSuccess && (
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>Print / Download Verified Receipt</span>
-                </button>
-              )}
-
-              {!isSuccess && (orderId || applicationIdParam) && (
+              {(orderId || applicationIdParam) && (
                 <button
                   type="button"
                   disabled={refreshing}

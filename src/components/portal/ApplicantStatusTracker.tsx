@@ -14,13 +14,15 @@ import {
   PenTool,
   Printer,
   Sparkles,
-  RefreshCw
+  RefreshCw,
+  X
 } from 'lucide-react';
 import { FranchiseApplication, DocumentUpload, PaymentRecord, UserRole } from '../../types/franchise';
 import { FRANCHISE_PLANS, getPlanById, FranchiseStorageService } from '../../services/storage';
 import { NotificationService } from '../../services/notificationService';
 import { BiometricPromptModal } from '../common/BiometricPromptModal';
 import { PaymentModal } from '../common/PaymentModal';
+import { OfficialReceiptCard } from '../common/OfficialReceiptCard';
 import { DocumentViewerModal } from '../common/DocumentViewerModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
@@ -52,6 +54,7 @@ export function ApplicantStatusTracker({
   const [activeTab, setActiveTab] = useState<'timeline' | 'documents' | 'contract' | 'payments'>('timeline');
   const [showBiometricModal, setShowBiometricModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [selectedReceiptPayment, setSelectedReceiptPayment] = useState<PaymentRecord | null>(null);
   const [selectedDocForView, setSelectedDocForView] = useState<DocumentUpload | null>(null);
   const [signingContract, setSigningContract] = useState(false);
   const [syncingRazorpay, setSyncingRazorpay] = useState(false);
@@ -180,26 +183,58 @@ export function ApplicantStatusTracker({
     };
   };
 
+  const getStoredGuestOrderSession = (): { orderId: string; checkoutToken: string } | null => {
+    if (typeof window === 'undefined' || !currentApp) return null;
+    try {
+      const raw = sessionStorage.getItem(`tdg_rzp_latest_app_${currentApp.id}`);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.orderId && parsed?.checkoutToken) {
+        return { orderId: String(parsed.orderId), checkoutToken: String(parsed.checkoutToken) };
+      }
+    } catch {
+      // Ignore malformed cache
+    }
+    return null;
+  };
+
+  const canSyncRazorpayStatus = Boolean(currentUser || getStoredGuestOrderSession());
+
   const handleSyncRazorpayStatus = async () => {
-    if (!currentUser) {
+    const guestSession = getStoredGuestOrderSession();
+    if (!currentUser && !guestSession) {
       NotificationService.addNotification(
         'Sign-In Required',
-        'Please sign in with Google to fetch live server-verified Razorpay payment status.',
+        'Sign in with Google or initiate a Razorpay order from this browser to refresh live server status.',
         'warning'
       );
       return;
     }
     setSyncingRazorpay(true);
     try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) return;
-      const res = await fetch(
-        `/api/payments/razorpay/status?applicationId=${encodeURIComponent(currentApp.id)}`,
-        { headers: { Authorization: `Bearer ${idToken}` } }
-      );
+      const idToken = currentUser ? await getFirebaseIdToken() : null;
+      const headers: Record<string, string> = {};
+      let queryUrl = `/api/payments/razorpay/status?applicationId=${encodeURIComponent(currentApp.id)}`;
+
+      if (idToken) {
+        headers.Authorization = `Bearer ${idToken}`;
+      } else if (guestSession) {
+        headers['X-Checkout-Token'] = guestSession.checkoutToken;
+        queryUrl = `/api/payments/razorpay/status?orderId=${encodeURIComponent(guestSession.orderId)}`;
+      } else {
+        return;
+      }
+
+      const res = await fetch(queryUrl, { headers });
       const data = await res.json().catch(() => null);
-      if (res.ok && data?.ok && Array.isArray(data.payments)) {
-        for (const sp of data.payments) {
+      const serverPayments = Array.isArray(data?.payments)
+        ? data.payments
+        : data?.payment
+        ? [data.payment]
+        : null;
+
+      if (res.ok && data?.ok && serverPayments) {
+        for (const sp of serverPayments) {
           const mappedStatus: PaymentRecord['status'] =
             sp.paymentStatus === 'CAPTURED'
               ? 'completed'
@@ -239,8 +274,8 @@ export function ApplicantStatusTracker({
         }
         NotificationService.addNotification(
           'Payment Status Synced',
-          data.payments.length > 0
-            ? `Synced ${data.payments.length} server-verified Razorpay payment record(s).`
+          serverPayments.length > 0
+            ? `Synced ${serverPayments.length} server-verified Razorpay payment record(s).`
             : 'No server-side Razorpay orders found yet for this application.',
           'info',
           currentApp.id
@@ -918,7 +953,7 @@ export function ApplicantStatusTracker({
               </p>
             </div>
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {currentUser && (
+              {canSyncRazorpayStatus && (
                 <button
                   type="button"
                   disabled={syncingRazorpay}
@@ -1052,11 +1087,11 @@ export function ApplicantStatusTracker({
                         {statusInfo.verified && (
                           <button
                             type="button"
-                            onClick={() => window.print()}
+                            onClick={() => setSelectedReceiptPayment(pay)}
                             className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                           >
                             <Printer className="w-3 h-3" />
-                            <span>Receipt</span>
+                            <span>View Receipt</span>
                           </button>
                         )}
                       </div>
@@ -1080,7 +1115,7 @@ export function ApplicantStatusTracker({
         />
       )}
 
-      {/* Payment Modal */}
+      {/* Payment Modal — stays open after payment so applicant can inspect, print, or download the verified receipt */}
       {showPaymentModal && (
         <PaymentModal
           isOpen={showPaymentModal}
@@ -1093,10 +1128,48 @@ export function ApplicantStatusTracker({
           onSignInGoogle={onSignInGoogle}
           onNavigate={onNavigate}
           onPaymentSuccess={() => {
-            setShowPaymentModal(false);
             onRefresh();
           }}
         />
+      )}
+
+      {/* Official Verified Payment Receipt Modal */}
+      {selectedReceiptPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm">
+          <div className="relative w-full max-w-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 sm:p-7 max-h-[92vh] overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setSelectedReceiptPayment(null)}
+              className="no-print absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors cursor-pointer"
+              aria-label="Close receipt modal"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <OfficialReceiptCard
+              receipt={{
+                receiptNumber: selectedReceiptPayment.receiptNumber,
+                applicationId: currentApp.id,
+                applicantName: selectedReceiptPayment.billingName || currentApp.applicant.fullName,
+                applicantEmail: currentApp.applicant.email,
+                applicantPhone: currentApp.applicant.phone,
+                planId: currentApp.planId,
+                planTitle: plan.title,
+                amountINR: selectedReceiptPayment.amount,
+                baseAmountINR: selectedReceiptPayment.baseAmount,
+                gstAmountINR: selectedReceiptPayment.gstAmount,
+                razorpayOrderId: selectedReceiptPayment.razorpayOrderId,
+                razorpayPaymentId: selectedReceiptPayment.razorpayPaymentId,
+                referenceCode: selectedReceiptPayment.referenceCode,
+                paymentMethodDetails: selectedReceiptPayment.paymentMethodDetails,
+                timestamp: selectedReceiptPayment.timestamp,
+                signatureVerified: selectedReceiptPayment.signatureVerified,
+                gateway: selectedReceiptPayment.gateway
+              }}
+              onClose={() => setSelectedReceiptPayment(null)}
+              closeLabel="Close Receipt"
+            />
+          </div>
+        </div>
       )}
 
       {/* Document Viewer Modal */}
