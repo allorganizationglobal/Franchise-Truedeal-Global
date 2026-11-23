@@ -565,7 +565,7 @@ async function createServer() {
   });
 
   // 6. Franchise Referral Program Endpoints (Public Registration/Status + Admin Payout Management)
-  app.post('/api/referrals/register', (req: Request, res: Response) => {
+  const handleReferralRegister = (req: Request, res: Response) => {
     const body = req.body || {};
     const result = registerReferralPartner({
       name: String(body.name || ''),
@@ -576,9 +576,9 @@ async function createServer() {
       clientIp: getClientIp(req)
     });
     return res.status(result.statusCode).json(result);
-  });
+  };
 
-  app.get('/api/referrals/status', (req: Request, res: Response) => {
+  const handleReferralStatus = (req: Request, res: Response) => {
     const mode = String(req.query.mode || '').trim();
     if (mode === 'schedule') {
       return res.status(200).json({ ok: true, schedule: getReferralCommissionSchedule() });
@@ -586,7 +586,12 @@ async function createServer() {
     const queryVal = String(req.query.query || '').trim();
     const result = lookupReferralPartnerStatus(queryVal, getClientIp(req));
     return res.status(result.statusCode).json(result);
-  });
+  };
+
+  app.post('/api/referrals/register', handleReferralRegister);
+  app.post('/api/referrals', handleReferralRegister);
+  app.get('/api/referrals/status', handleReferralStatus);
+  app.get('/api/referrals', handleReferralStatus);
 
   app.get('/api/admin/referrals', async (req: Request, res: Response) => {
     const caller = await verifyFirebaseBearerToken(req.headers.authorization);
