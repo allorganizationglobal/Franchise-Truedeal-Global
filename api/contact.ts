@@ -1,4 +1,4 @@
-import { ingestLeadToCrm } from '../src/server/leadService';
+import { ingestLeadToCrm } from '../src/server/leadService.js';
 
 // Lightweight in-memory rate limit map per serverless warm instance
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();

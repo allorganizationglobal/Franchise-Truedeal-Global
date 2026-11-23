@@ -1,5 +1,5 @@
-import { verifyFirebaseBearerToken } from '../../../src/server/firebaseAuthVerify';
-import { sendTransactionalFranchiseEmail } from '../../../src/server/emailService';
+import { verifyFirebaseBearerToken } from '../../../src/server/firebaseAuthVerify.js';
+import { sendTransactionalFranchiseEmail } from '../../../src/server/emailService.js';
 
 /**
  * Vercel Serverless Function: POST /api/admin/applications/notify

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { UserRole } from '../types/franchise';
+import type { UserRole } from '../types/franchise.js';
 
 /**
  * TRUEDEAL GLOBAL - Server-Side Authentication & Authorization Service

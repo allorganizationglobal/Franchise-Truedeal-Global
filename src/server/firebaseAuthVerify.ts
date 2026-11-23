@@ -1,13 +1,12 @@
 import { initializeApp, getApps, getApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
 import {
   resolveServerUserRole,
   ROLE_PERMISSIONS,
   AdminPermission,
   verifySessionToken
-} from './authService';
-import { UserRole } from '../types/franchise';
+} from './authService.js';
+import type { UserRole } from '../types/franchise.js';
 
 /**
  * TRUEDEAL GLOBAL — Server-Side Firebase ID Token Verification
@@ -21,12 +20,23 @@ import { UserRole } from '../types/franchise';
  * SDK secured by hardened Eight-Pillar firestore.rules.
  */
 
+const DEFAULT_FIREBASE_PROJECT_ID = 'rational-medium-x5wls';
+
+function resolveFirebaseProjectId(): string {
+  const envProjectId = (
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.VITE_FIREBASE_PROJECT_ID ||
+    ''
+  ).trim();
+  return envProjectId || DEFAULT_FIREBASE_PROJECT_ID;
+}
+
 function getFirebaseAdminAuthApp() {
   if (getApps().length > 0) {
     return getApp();
   }
   return initializeApp({
-    projectId: process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId
+    projectId: resolveFirebaseProjectId()
   });
 }
 

@@ -1,11 +1,11 @@
-import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify';
+import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify.js';
 import {
   getRazorpayPersistenceAdapter,
   getRazorpayConfigStatus,
   reconcileRazorpayOrder,
   initiateRazorpayRefund,
   addRazorpayAdminNote
-} from '../../src/server/razorpayService';
+} from '../../src/server/razorpayService.js';
 
 /**
  * Vercel Serverless Function: GET / POST /api/admin/payments

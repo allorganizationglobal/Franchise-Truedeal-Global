@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import Razorpay from 'razorpay';
-import { calculateServerPlanAmount, getAuthoritativePlan } from './plansCatalog';
-import { sendTransactionalFranchiseEmail } from './emailService';
+import { calculateServerPlanAmount, getAuthoritativePlan } from './plansCatalog.js';
+import { sendTransactionalFranchiseEmail } from './emailService.js';
 
 /**
  * TRUEDEAL GLOBAL OPC PVT LTD — Authoritative Razorpay Standard Web Checkout Engine
@@ -566,7 +566,8 @@ function getOfficialRazorpayClient(): RazorpayApiClient {
   const keyId = (process.env.RAZORPAY_KEY_ID || '').trim();
   const keySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
 
-  const sdk = new Razorpay({
+  const RazorpayCtor: any = (Razorpay as any)?.default || Razorpay;
+  const sdk = new RazorpayCtor({
     key_id: keyId,
     key_secret: keySecret
   });
@@ -928,7 +929,14 @@ export async function createRazorpayOrder(
     });
   } catch (err: any) {
     const statusCode = Number(err?.statusCode || err?.error?.statusCode || 0);
-    if (statusCode === 401 || statusCode === 403 || /authentication failed/i.test(String(err?.error?.description || err?.message || ''))) {
+    const rawDesc = String(err?.error?.description || err?.message || '').trim();
+    const safeDesc = rawDesc && !/secret|key_secret|authorization|bearer/i.test(rawDesc) ? rawDesc.slice(0, 220) : '';
+    console.error('[Razorpay createOrder failed]', {
+      statusCode,
+      code: err?.error?.code || err?.code || 'unknown',
+      description: safeDesc || 'unclassified_error'
+    });
+    if (statusCode === 401 || statusCode === 403 || /authentication failed/i.test(rawDesc)) {
       return {
         ok: false,
         statusCode: 401,
@@ -940,7 +948,9 @@ export async function createRazorpayOrder(
       ok: false,
       statusCode: 500,
       error: 'razorpay_api_error',
-      message: 'Unable to create Razorpay order right now. Please try again shortly.'
+      message: safeDesc
+        ? `Unable to create Razorpay order: ${safeDesc}`
+        : 'Unable to create Razorpay order right now. Please try again shortly.'
     };
   }
 

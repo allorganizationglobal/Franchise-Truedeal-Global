@@ -3,13 +3,13 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
-import { ingestLeadToCrm } from './src/server/leadService';
+import { ingestLeadToCrm } from './src/server/leadService.js';
 import {
   createSignedSessionToken,
   setRuntimeRoleOverride,
   getAllRuntimeRoleOverrides
-} from './src/server/authService';
-import { verifyFirebaseBearerToken } from './src/server/firebaseAuthVerify';
+} from './src/server/authService.js';
+import { verifyFirebaseBearerToken } from './src/server/firebaseAuthVerify.js';
 import {
   getRazorpayConfigStatus,
   createRazorpayOrder,
@@ -22,8 +22,8 @@ import {
   getRazorpayPersistenceAdapter,
   deriveGuestApplicantUid,
   verifySignedCheckoutToken
-} from './src/server/razorpayService';
-import { sendTransactionalFranchiseEmail } from './src/server/emailService';
+} from './src/server/razorpayService.js';
+import { sendTransactionalFranchiseEmail } from './src/server/emailService.js';
 
 dotenv.config();
 

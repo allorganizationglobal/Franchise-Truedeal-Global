@@ -1,4 +1,4 @@
-import { processRazorpayWebhook } from '../../src/server/razorpayService';
+import { processRazorpayWebhook } from '../../src/server/razorpayService.js';
 
 /**
  * Vercel Serverless Function: POST /api/webhooks/payment

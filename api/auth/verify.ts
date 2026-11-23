@@ -1,5 +1,5 @@
-import { createSignedSessionToken } from '../../src/server/authService';
-import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify';
+import { createSignedSessionToken } from '../../src/server/authService.js';
+import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify.js';
 
 /**
  * Vercel Serverless Function: POST /api/auth/verify

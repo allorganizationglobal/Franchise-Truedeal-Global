@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { ingestLeadToCrm } from '../../src/server/leadService';
+import { ingestLeadToCrm } from '../../src/server/leadService.js';
 
 /**
  * Vercel Serverless Function: POST /api/leads/ingest

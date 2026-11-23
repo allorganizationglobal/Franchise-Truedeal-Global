@@ -1,5 +1,5 @@
-import { verifyFirebaseBearerToken } from '../src/server/firebaseAuthVerify';
-import { createRazorpayOrder, deriveGuestApplicantUid } from '../src/server/razorpayService';
+import { verifyFirebaseBearerToken } from '../src/server/firebaseAuthVerify.js';
+import { createRazorpayOrder, deriveGuestApplicantUid } from '../src/server/razorpayService.js';
 
 /**
  * Vercel Serverless Function: POST /api/create-order
@@ -20,93 +20,117 @@ export default async function handler(req: any, res: any) {
     return res.end(JSON.stringify({ ok: false, error: 'method_not_allowed', message: 'Use POST.' }));
   }
 
-  let body = req.body;
-  if (typeof body === 'string') {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ ok: false, error: 'invalid_json', message: 'Invalid JSON request body.' }));
+  try {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        res.statusCode = 400;
+        return res.end(JSON.stringify({ ok: false, error: 'invalid_json', message: 'Invalid JSON request body.' }));
+      }
+    } else if (!body && req && typeof req[Symbol.asyncIterator] === 'function') {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const raw = Buffer.concat(chunks).toString('utf8').trim();
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        res.statusCode = 400;
+        return res.end(JSON.stringify({ ok: false, error: 'invalid_json', message: 'Invalid JSON request body.' }));
+      }
     }
+    body = body || {};
+
+    const authHeader = String(req.headers?.authorization || '').trim();
+    let userId = '';
+    let email = '';
+    let applicantName = String(body.applicantName || '').trim();
+    const phone = String(body.phone || '').trim();
+
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const caller = await verifyFirebaseBearerToken(authHeader);
+      if (!caller.valid || !caller.uid || !caller.email) {
+        res.statusCode = 401;
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'unauthorized',
+            message: caller.error || 'Invalid authentication token. Please retry or continue with your applicant details.'
+          })
+        );
+      }
+      userId = caller.uid;
+      email = caller.email.toLowerCase();
+      applicantName = applicantName || caller.name || 'Franchise Applicant';
+    } else {
+      // Direct applicant checkout without requiring Google Sign-In
+      email = String(body.email || '').trim().toLowerCase();
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (applicantName.length < 2 || applicantName.length > 120) {
+        res.statusCode = 400;
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'invalid_customer_name',
+            message: 'Please enter your full name (2–120 characters) before launching Razorpay Checkout.'
+          })
+        );
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        res.statusCode = 400;
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'invalid_customer_email',
+            message: 'Please enter a valid email address for your Razorpay payment receipt.'
+          })
+        );
+      }
+      if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+        res.statusCode = 400;
+        return res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'invalid_customer_phone',
+            message: 'Please enter a valid mobile number (7–15 digits) before launching Razorpay Checkout.'
+          })
+        );
+      }
+      userId = deriveGuestApplicantUid(email);
+    }
+
+    const clientIp =
+      (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      req.socket?.remoteAddress ||
+      'unknown';
+
+    const result = await createRazorpayOrder({
+      applicationId: String(body.applicationId || ''),
+      planId: String(body.planId || ''),
+      paymentPurpose: body.paymentPurpose === 'application_fee' ? 'application_fee' : 'franchise_deposit',
+      userId,
+      applicantName,
+      email,
+      phone,
+      termsAccepted: body.termsAccepted !== false,
+      forceNewOrder: Boolean(body.forceNewOrder),
+      clientIp
+    });
+
+    res.statusCode = result.statusCode;
+    return res.end(JSON.stringify(result));
+  } catch (err: any) {
+    console.error('[API /api/create-order] Unhandled error:', err?.message || 'unknown');
+    res.statusCode = 500;
+    return res.end(
+      JSON.stringify({
+        ok: false,
+        error: 'internal_server_error',
+        message: 'Unable to create Razorpay order right now. Please try again or contact support.'
+      })
+    );
   }
-  body = body || {};
-
-  const authHeader = String(req.headers?.authorization || '').trim();
-  let userId = '';
-  let email = '';
-  let applicantName = String(body.applicantName || '').trim();
-  const phone = String(body.phone || '').trim();
-
-  if (authHeader.toLowerCase().startsWith('bearer ')) {
-    const caller = await verifyFirebaseBearerToken(authHeader);
-    if (!caller.valid || !caller.uid || !caller.email) {
-      res.statusCode = 401;
-      return res.end(
-        JSON.stringify({
-          ok: false,
-          error: 'unauthorized',
-          message: caller.error || 'Invalid authentication token. Please retry or continue with your applicant details.'
-        })
-      );
-    }
-    userId = caller.uid;
-    email = caller.email.toLowerCase();
-    applicantName = applicantName || caller.name || 'Franchise Applicant';
-  } else {
-    // Direct applicant checkout without requiring Google Sign-In
-    email = String(body.email || '').trim().toLowerCase();
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (applicantName.length < 2 || applicantName.length > 120) {
-      res.statusCode = 400;
-      return res.end(
-        JSON.stringify({
-          ok: false,
-          error: 'invalid_customer_name',
-          message: 'Please enter your full name (2–120 characters) before launching Razorpay Checkout.'
-        })
-      );
-    }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      res.statusCode = 400;
-      return res.end(
-        JSON.stringify({
-          ok: false,
-          error: 'invalid_customer_email',
-          message: 'Please enter a valid email address for your Razorpay payment receipt.'
-        })
-      );
-    }
-    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
-      res.statusCode = 400;
-      return res.end(
-        JSON.stringify({
-          ok: false,
-          error: 'invalid_customer_phone',
-          message: 'Please enter a valid mobile number (7–15 digits) before launching Razorpay Checkout.'
-        })
-      );
-    }
-    userId = deriveGuestApplicantUid(email);
-  }
-
-  const clientIp =
-    (req.headers?.['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
-    req.socket?.remoteAddress ||
-    'unknown';
-
-  const result = await createRazorpayOrder({
-    applicationId: String(body.applicationId || ''),
-    planId: String(body.planId || ''),
-    paymentPurpose: body.paymentPurpose === 'application_fee' ? 'application_fee' : 'franchise_deposit',
-    userId,
-    applicantName,
-    email,
-    phone,
-    termsAccepted: body.termsAccepted !== false,
-    forceNewOrder: Boolean(body.forceNewOrder),
-    clientIp
-  });
-
-  res.statusCode = result.statusCode;
-  return res.end(JSON.stringify(result));
 }

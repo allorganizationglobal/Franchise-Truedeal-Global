@@ -398,12 +398,13 @@ export function PaymentModal({
       }
 
       if (!createRes.ok || !createData?.ok || !createData?.order?.id) {
+        const fallbackMsg = createRes.ok
+          ? 'Unable to create Razorpay order right now. Please try again or contact support.'
+          : `Unable to create Razorpay order right now (Server HTTP ${createRes.status}). Please try again or contact support.`;
         setRzpBanner({
           state: 'failed',
           title: createRes.status === 503 ? 'Razorpay Server Configuration Pending' : 'Order Creation Failed',
-          message:
-            createData?.message ||
-            'Unable to create Razorpay order right now. Please try again or contact support.'
+          message: createData?.message || fallbackMsg
         });
         rzpClickLockRef.current = false;
         setRzpBusy(false);

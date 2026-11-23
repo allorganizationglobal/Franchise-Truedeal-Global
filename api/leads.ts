@@ -1,4 +1,4 @@
-import handler from './leads/ingest';
+import handler from './leads/ingest.js';
 
 /**
  * Vercel Serverless Function: POST /api/leads
