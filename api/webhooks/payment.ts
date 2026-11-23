@@ -1,14 +1,30 @@
-import crypto from 'crypto';
-import { processPayUGatewayResponse, timingSafeHexEquals } from '../../src/server/payuService';
 import { processRazorpayWebhook } from '../../src/server/razorpayService';
 
 /**
  * Vercel Serverless Function: POST /api/webhooks/payment
- * Legacy webhook endpoint updated to route Razorpay & PayU webhooks cleanly
- * or validate HMAC-SHA256 signatures in constant time when PAYMENT_WEBHOOK_SECRET is configured.
+ * Legacy payment webhook alias — routes directly to Razorpay raw-body HMAC-SHA256 verification.
+ * Primary official webhook URL: https://businessfranchise.truedealglobal.com/api/webhooks/razorpay
  */
+export const config = {
+  api: {
+    bodyParser: false
+  }
+};
 
-const processedWebhookTxIds = new Set<string>();
+async function readRawBody(req: any): Promise<string> {
+  if (typeof req.rawBody === 'string') return req.rawBody;
+  if (Buffer.isBuffer(req.body)) return req.body.toString('utf8');
+  if (typeof req.body === 'string') return req.body;
+  if (req && typeof req[Symbol.asyncIterator] === 'function') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    if (chunks.length > 0) return Buffer.concat(chunks).toString('utf8');
+  }
+  if (req.body && typeof req.body === 'object') return JSON.stringify(req.body);
+  return '';
+}
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
@@ -16,96 +32,27 @@ export default async function handler(req: any, res: any) {
 
   if (req.method !== 'POST') {
     res.statusCode = 405;
-    return res.end(JSON.stringify({ error: 'method_not_allowed' }));
+    return res.end(JSON.stringify({ ok: false, error: 'method_not_allowed' }));
   }
 
-  // Delegate Razorpay webhooks if x-razorpay-signature header is present
-  const rzpSig = (req.headers?.['x-razorpay-signature'] as string) || '';
-  if (rzpSig) {
-    const rawBody =
-      typeof req.rawBody === 'string'
-        ? req.rawBody
-        : typeof req.body === 'string'
-        ? req.body
-        : JSON.stringify(req.body || {});
-    const result = await processRazorpayWebhook({
-      rawBody,
-      signatureHeader: rzpSig,
-      eventIdHeader: (req.headers?.['x-razorpay-event-id'] as string) || undefined
-    });
-    res.statusCode = result.statusCode;
-    return res.end(JSON.stringify(result));
-  }
-
-  let body = req.body;
-  if (typeof body === 'string') {
-    try {
-      if (body.trim().startsWith('{')) {
-        body = JSON.parse(body);
-      } else {
-        body = Object.fromEntries(new URLSearchParams(body).entries());
-      }
-    } catch {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ error: 'invalid_payload' }));
-    }
-  }
-
-  // Delegate PayU payloads directly to authoritative PayU processor
-  if (body?.txnid && body?.hash && body?.key) {
-    const sig =
-      (req.headers?.['x-payu-signature'] as string) ||
-      (req.headers?.['x-webhook-signature'] as string) ||
-      undefined;
-    const result = await processPayUGatewayResponse(body, 'webhook', sig);
-    res.statusCode = result.statusCode;
-    return res.end(JSON.stringify(result));
-  }
-
-  const webhookSecret = process.env.PAYU_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET;
-  const providedSignature =
-    (req.headers?.['x-payu-signature'] as string) ||
-    (req.headers?.['x-webhook-signature'] as string) ||
-    '';
-
-  if (!webhookSecret) {
-    res.statusCode = 503;
-    return res.end(JSON.stringify({ error: 'webhook_not_configured', message: 'Payment webhook secret is not configured.' }));
-  }
-
-  const rawPayload = typeof req.body === 'string' ? req.body : JSON.stringify(body);
-  const expectedSig = crypto.createHmac('sha256', webhookSecret).update(rawPayload).digest('hex');
-  if (!timingSafeHexEquals(expectedSig, providedSignature)) {
-    res.statusCode = 401;
-    return res.end(JSON.stringify({ error: 'invalid_signature', message: 'Webhook signature verification failed.' }));
-  }
-
-  const paymentData = body?.data || body;
-  const transactionId = paymentData?.id || paymentData?.transactionId || paymentData?.referenceCode;
-  if (!transactionId) {
+  const rawBody = await readRawBody(req);
+  if (!rawBody) {
     res.statusCode = 400;
-    return res.end(JSON.stringify({ error: 'missing_transaction_id' }));
+    return res.end(JSON.stringify({ ok: false, error: 'empty_body', message: 'Webhook body is empty.' }));
   }
 
-  if (processedWebhookTxIds.has(transactionId)) {
-    res.statusCode = 200;
-    return res.end(
-      JSON.stringify({
-        success: true,
-        status: 'duplicate_acknowledged',
-        transactionId
-      })
-    );
-  }
+  const result = await processRazorpayWebhook({
+    rawBody,
+    signatureHeader:
+      (req.headers?.['x-razorpay-signature'] as string) ||
+      (req.headers?.['X-Razorpay-Signature'] as string) ||
+      '',
+    eventIdHeader:
+      (req.headers?.['x-razorpay-event-id'] as string) ||
+      (req.headers?.['X-Razorpay-Event-Id'] as string) ||
+      undefined
+  });
 
-  processedWebhookTxIds.add(transactionId);
-  res.statusCode = 200;
-  return res.end(
-    JSON.stringify({
-      success: true,
-      status: 'processed',
-      transactionId,
-      timestamp: new Date().toISOString()
-    })
-  );
+  res.statusCode = result.statusCode;
+  return res.end(JSON.stringify(result));
 }

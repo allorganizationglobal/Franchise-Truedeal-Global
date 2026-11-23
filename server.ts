@@ -2,7 +2,6 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { ingestLeadToCrm } from './src/server/leadService';
 import {
@@ -11,14 +10,6 @@ import {
   getAllRuntimeRoleOverrides
 } from './src/server/authService';
 import { verifyFirebaseBearerToken } from './src/server/firebaseAuthVerify';
-import {
-  getPayUConfigStatus,
-  initiatePayUPaymentOrder,
-  processPayUGatewayResponse,
-  reconcilePayUTransaction,
-  getPayUPersistenceAdapter,
-  timingSafeHexEquals
-} from './src/server/payuService';
 import {
   getRazorpayConfigStatus,
   createRazorpayOrder,
@@ -40,8 +31,7 @@ const __dirname = path.dirname(__filename);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const isProduction = process.env.NODE_ENV === 'production';
 
-// Webhook idempotency memory cache & contact form rate limiting
-const processedWebhookTxIds = new Set<string>();
+// Contact form rate limiting
 const contactRateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function getClientIp(req: Request): string {
@@ -78,7 +68,6 @@ async function createServer() {
 
   // API Health Endpoint (never exposes secrets)
   app.get('/api/health', (_req: Request, res: Response) => {
-    const payuStatus = getPayUConfigStatus();
     const razorpayStatus = getRazorpayConfigStatus();
     res.json({
       status: 'healthy',
@@ -89,7 +78,7 @@ async function createServer() {
         sendgridConfigured: !!process.env.SENDGRID_API_KEY
       },
       razorpayGateway: razorpayStatus,
-      paymentGateway: payuStatus,
+      paymentGateway: razorpayStatus,
       security: {
         rbacActive: true,
         firebaseIdTokenVerification: true,
@@ -102,8 +91,7 @@ async function createServer() {
   // Payment Gateway Readiness Diagnostics (no secrets exposed)
   app.get('/api/payments/readiness', (_req: Request, res: Response) => {
     return res.status(200).json({
-      razorpay: getRazorpayConfigStatus(),
-      payu: getPayUConfigStatus()
+      razorpay: getRazorpayConfigStatus()
     });
   });
 
@@ -368,135 +356,7 @@ async function createServer() {
     return res.status(result.statusCode).json(result);
   });
 
-  // =========================================================================
-  // PAYU INDIA CLASSIC HOSTED CHECKOUT ROUTES (Preserved)
-  // =========================================================================
-
-  // 1. Initiate PayU Payment Order (Authenticated, Server-Calculated Amount & SHA-512 Hash)
-  app.post('/api/payments/payu/initiate', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid || !caller.email) {
-      return res.status(401).json({
-        ok: false,
-        error: 'unauthorized',
-        message: caller.error || 'Please sign in with Google before initiating payment.'
-      });
-    }
-
-    const body = req.body || {};
-    const host = req.headers.host;
-    const proto = (req.headers['x-forwarded-proto'] as string) || 'http';
-    const inferredOrigin = host ? `${proto}://${host}` : undefined;
-
-    const result = await initiatePayUPaymentOrder({
-      applicationId: String(body.applicationId || ''),
-      planId: String(body.planId || ''),
-      userId: caller.uid,
-      applicantName: String(body.applicantName || caller.name || 'Franchise Applicant'),
-      email: caller.email,
-      phone: String(body.phone || ''),
-      clientSuppliedAmount: typeof body.amount === 'number' ? body.amount : undefined,
-      clientIp: getClientIp(req),
-      appBaseUrlOverride: process.env.APP_BASE_URL || inferredOrigin
-    });
-
-    return res.status(result.statusCode).json(result);
-  });
-
-  // 2. PayU Browser Redirect Callback (surl / furl — POST form-urlencoded)
-  app.post('/api/payments/payu/callback', async (req: Request, res: Response) => {
-    const body = req.body || {};
-    const result = await processPayUGatewayResponse(body, 'callback');
-    const txnid = encodeURIComponent(String(body.txnid || result.payment?.txnId || ''));
-    const appId = encodeURIComponent(String(result.payment?.applicationId || body.udf1 || ''));
-    const statusParam = encodeURIComponent(result.finalStatus);
-    const reasonParam = result.error ? `&reason=${encodeURIComponent(result.error)}` : '';
-
-    return res.redirect(303, `/payment-result?txnid=${txnid}&applicationId=${appId}&status=${statusParam}${reasonParam}`);
-  });
-
-  // 3. PayU Server-to-Server Webhook (POST)
-  app.post('/api/payments/payu/webhook', async (req: Request, res: Response) => {
-    const body = req.body || {};
-    const webhookSig =
-      (req.headers['x-payu-signature'] as string) ||
-      (req.headers['x-webhook-signature'] as string) ||
-      undefined;
-
-    const result = await processPayUGatewayResponse(body, 'webhook', webhookSig);
-    return res.status(result.statusCode).json({
-      ok: result.ok,
-      duplicate: Boolean(result.duplicate),
-      finalStatus: result.finalStatus,
-      txnid: result.payment?.txnId || body?.txnid || null,
-      receiptNumber: result.payment?.receiptNumber || null,
-      error: result.error,
-      message: result.message
-    });
-  });
-
-  // 4. Independent PayU `verify_payment` Reconciliation (Authenticated Owner or Admin)
-  app.post('/api/payments/payu/verify', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid) {
-      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
-    }
-
-    const txnid = String(req.body?.txnid || '').trim();
-    if (!txnid) {
-      return res.status(400).json({ ok: false, error: 'missing_txnid', message: 'Transaction ID is required.' });
-    }
-
-    const store = getPayUPersistenceAdapter();
-    const existing = await store.getPaymentByTxnId(txnid);
-    if (!existing) {
-      return res.status(404).json({ ok: false, error: 'not_found', message: 'Transaction not found.' });
-    }
-
-    if (!caller.isAdmin && existing.userId !== caller.uid) {
-      return res.status(403).json({ ok: false, error: 'forbidden', message: 'You are not authorized to verify this transaction.' });
-    }
-
-    const result = await reconcilePayUTransaction(txnid);
-    return res.status(result.statusCode).json(result);
-  });
-
-  // 5. Query Authoritative Payment Status (Public config check OR Authenticated Owner/Admin status lookup)
-  app.get('/api/payments/payu/status', async (req: Request, res: Response) => {
-    if (req.query.mode === 'config') {
-      return res.status(200).json({ ok: true, config: getPayUConfigStatus() });
-    }
-
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid) {
-      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
-    }
-
-    const txnid = String(req.query.txnid || '').trim();
-    const applicationId = String(req.query.applicationId || '').trim();
-    const store = getPayUPersistenceAdapter();
-
-    if (txnid) {
-      const payment = await store.getPaymentByTxnId(txnid);
-      if (!payment) {
-        return res.status(404).json({ ok: false, error: 'not_found', message: 'Payment record not found.' });
-      }
-      if (!caller.isAdmin && payment.userId !== caller.uid) {
-        return res.status(403).json({ ok: false, error: 'forbidden', message: 'Unauthorized access to payment record.' });
-      }
-      return res.status(200).json({ ok: true, payment });
-    }
-
-    if (applicationId) {
-      const payments = await store.getPaymentsByApplicationId(applicationId);
-      const visible = caller.isAdmin ? payments : payments.filter((p) => p.userId === caller.uid);
-      return res.status(200).json({ ok: true, payments: visible });
-    }
-
-    return res.status(400).json({ ok: false, error: 'missing_query', message: 'Provide txnid, applicationId, or mode=config.' });
-  });
-
-  // 6. Admin Payments Ledger, Stats, Reconciliation & Refund Management (Strictly Admin-Only)
+  // 5. Admin Razorpay Payments Ledger, Stats, Reconciliation & Refund Management (Strictly Admin-Only)
   app.get('/api/admin/payments', async (req: Request, res: Response) => {
     const caller = await verifyFirebaseBearerToken(req.headers.authorization);
     if (!caller.valid || !caller.uid) {
@@ -506,26 +366,11 @@ async function createServer() {
       return res.status(403).json({ ok: false, error: 'forbidden', message: 'Administrator role required.' });
     }
 
-    const store = getPayUPersistenceAdapter();
     const rzpStore = getRazorpayPersistenceAdapter();
-    const [payments, webhookEvents, razorpayPayments, razorpayWebhooks] = await Promise.all([
-      store.getAllPayments(),
-      store.getAllWebhookEvents(),
+    const [razorpayPayments, razorpayWebhooks] = await Promise.all([
       rzpStore.getAllPayments(),
       rzpStore.getAllWebhookEvents()
     ]);
-
-    const stats = {
-      totalTransactions: payments.length,
-      pendingCount: payments.filter((p) => p.paymentStatus === 'PAYMENT_PENDING' || p.paymentStatus === 'CREATED' || p.paymentStatus === 'UNDER_REVIEW').length,
-      successCount: payments.filter((p) => p.paymentStatus === 'SUCCESS').length,
-      failedCount: payments.filter((p) => p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED' || p.paymentStatus === 'EXPIRED').length,
-      refundPendingCount: payments.filter((p) => p.paymentStatus === 'REFUND_PENDING').length,
-      refundedCount: payments.filter((p) => p.paymentStatus === 'REFUNDED').length,
-      totalVerifiedCollectionsINR: payments
-        .filter((p) => p.paymentStatus === 'SUCCESS')
-        .reduce((sum, p) => sum + p.amount, 0)
-    };
 
     const razorpayStats = {
       totalTransactions: razorpayPayments.length,
@@ -547,9 +392,6 @@ async function createServer() {
 
     return res.status(200).json({
       ok: true,
-      stats,
-      payments,
-      webhookEvents,
       razorpayStats,
       razorpayPayments,
       razorpayWebhooks
@@ -598,35 +440,6 @@ async function createServer() {
       return res.status(result.statusCode).json(result);
     }
 
-    const txnid = String(req.body?.txnid || '').trim();
-    if (!txnid) {
-      return res.status(400).json({ ok: false, error: 'missing_txnid' });
-    }
-
-    if (action === 'reconcile') {
-      const result = await reconcilePayUTransaction(txnid);
-      return res.status(result.statusCode).json(result);
-    }
-
-    const store = getPayUPersistenceAdapter();
-    if (action === 'mark_refund_pending' || action === 'mark_refunded') {
-      const rec = await store.getPaymentByTxnId(txnid);
-      if (!rec) {
-        return res.status(404).json({ ok: false, error: 'not_found' });
-      }
-      if (rec.paymentStatus !== 'SUCCESS' && rec.paymentStatus !== 'REFUND_PENDING') {
-        return res.status(400).json({
-          ok: false,
-          error: 'invalid_refund_state',
-          message: 'Only verified SUCCESS or REFUND_PENDING transactions can transition to refund states.'
-        });
-      }
-      rec.paymentStatus = action === 'mark_refunded' ? 'REFUNDED' : 'REFUND_PENDING';
-      rec.updatedAt = new Date().toISOString();
-      await store.savePayment(rec);
-      return res.status(200).json({ ok: true, payment: rec });
-    }
-
     return res.status(400).json({ ok: false, error: 'unsupported_action' });
   });
 
@@ -665,56 +478,29 @@ async function createServer() {
     });
   });
 
-  // Legacy Payment Webhook Handler (Routes PayU payloads cleanly or validates HMAC timing-safely)
+  // Legacy Payment Webhook Alias -> Strictly routes to Razorpay raw-body HMAC verification
   app.post('/api/webhooks/payment', async (req: Request, res: Response) => {
-    const body = req.body || {};
-    if (body?.txnid && body?.hash && body?.key) {
-      const result = await processPayUGatewayResponse(
-        body,
-        'webhook',
-        (req.headers['x-payu-signature'] as string) || (req.headers['x-webhook-signature'] as string) || undefined
-      );
-      return res.status(result.statusCode).json(result);
-    }
+    const rawBody =
+      typeof (req as any).rawBody === 'string'
+        ? (req as any).rawBody
+        : typeof req.body === 'string'
+        ? req.body
+        : JSON.stringify(req.body || {});
 
-    const webhookSecret = process.env.PAYU_WEBHOOK_SECRET || process.env.PAYMENT_WEBHOOK_SECRET;
-    const providedSig =
-      (req.headers['x-payu-signature'] as string) ||
-      (req.headers['x-webhook-signature'] as string) ||
-      '';
+    const result = await processRazorpayWebhook({
+      rawBody,
+      signatureHeader: (req.headers['x-razorpay-signature'] as string) || '',
+      eventIdHeader: (req.headers['x-razorpay-event-id'] as string) || undefined
+    });
 
-    if (webhookSecret) {
-      const expectedSig = crypto
-        .createHmac('sha256', webhookSecret)
-        .update(JSON.stringify(body))
-        .digest('hex');
-      if (!timingSafeHexEquals(expectedSig, providedSig)) {
-        return res.status(401).json({ error: 'invalid_signature', message: 'Signature verification failed' });
-      }
-    } else {
-      return res.status(503).json({ error: 'webhook_not_configured', message: 'Payment webhook secret is not configured.' });
-    }
-
-    const paymentData = body?.data || body;
-    const transactionId = paymentData?.id || paymentData?.transactionId || paymentData?.referenceCode;
-    if (!transactionId) {
-      return res.status(400).json({ error: 'missing_transaction_id' });
-    }
-
-    if (processedWebhookTxIds.has(transactionId)) {
-      return res.status(200).json({
-        success: true,
-        status: 'duplicate_acknowledged',
-        transactionId
-      });
-    }
-
-    processedWebhookTxIds.add(transactionId);
-    return res.status(200).json({
-      success: true,
-      status: 'processed',
-      transactionId,
-      timestamp: new Date().toISOString()
+    return res.status(result.statusCode).json({
+      ok: result.ok,
+      duplicate: Boolean(result.duplicate),
+      eventId: result.eventId || null,
+      eventType: result.eventType || null,
+      paymentStatus: result.paymentStatus || null,
+      error: result.error,
+      message: result.message
     });
   });
 

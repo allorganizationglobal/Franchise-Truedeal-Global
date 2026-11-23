@@ -125,13 +125,13 @@ export const PAGE_SEO_MAP: Record<string, PageSeoConfig> = {
   api: {
     title: 'Partner Integration & API Specifications | TRUEDEAL GLOBAL',
     description:
-      'Restricted technical API specifications, PayU webhook verification standards, and integration architecture for authorized TRUEDEAL GLOBAL administrators.',
+      'Restricted technical API specifications, Razorpay webhook verification standards, and integration architecture for authorized TRUEDEAL GLOBAL administrators.',
     canonicalUrl: `${CANONICAL_BASE_URL}/api-docs`,
     robots: NOINDEX_ROBOTS,
     ogType: 'article'
   },
   'payment-result': {
-    title: 'PayU Payment Verification Status | TRUEDEAL GLOBAL',
+    title: 'Razorpay Payment Verification Status | TRUEDEAL GLOBAL',
     description:
       'Private transaction verification and official receipt status page for TRUEDEAL GLOBAL franchise applicants.',
     canonicalUrl: `${CANONICAL_BASE_URL}/payment-result`,

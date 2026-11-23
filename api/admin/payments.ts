@@ -1,5 +1,4 @@
 import { verifyFirebaseBearerToken } from '../../src/server/firebaseAuthVerify';
-import { getPayUPersistenceAdapter, reconcilePayUTransaction } from '../../src/server/payuService';
 import {
   getRazorpayPersistenceAdapter,
   getRazorpayConfigStatus,
@@ -12,8 +11,8 @@ import {
  * Vercel Serverless Function: GET / POST /api/admin/payments
  *
  * Strictly enforces server-side Firebase ID token verification AND authorized admin role.
- * Serves unified Razorpay + PayU authoritative payment statistics, transaction ledgers,
- * webhook audit logs, live reconciliation, real Razorpay Refund API calls, and internal notes.
+ * Serves authoritative Razorpay payment statistics, transaction ledger, webhook audit logs,
+ * live reconciliation, real Razorpay Refund API calls, and internal administrative notes.
  */
 export default async function handler(req: any, res: any) {
   res.setHeader('Content-Type', 'application/json');
@@ -36,28 +35,13 @@ export default async function handler(req: any, res: any) {
     );
   }
 
-  const payuStore = getPayUPersistenceAdapter();
   const rzpStore = getRazorpayPersistenceAdapter();
 
   if (req.method === 'GET') {
-    const [payments, webhookEvents, razorpayPayments, razorpayWebhooks] = await Promise.all([
-      payuStore.getAllPayments(),
-      payuStore.getAllWebhookEvents(),
+    const [razorpayPayments, razorpayWebhooks] = await Promise.all([
       rzpStore.getAllPayments(),
       rzpStore.getAllWebhookEvents()
     ]);
-
-    const stats = {
-      totalTransactions: payments.length,
-      pendingCount: payments.filter((p) => p.paymentStatus === 'PAYMENT_PENDING' || p.paymentStatus === 'CREATED' || p.paymentStatus === 'UNDER_REVIEW').length,
-      successCount: payments.filter((p) => p.paymentStatus === 'SUCCESS').length,
-      failedCount: payments.filter((p) => p.paymentStatus === 'FAILED' || p.paymentStatus === 'CANCELLED' || p.paymentStatus === 'EXPIRED').length,
-      refundPendingCount: payments.filter((p) => p.paymentStatus === 'REFUND_PENDING').length,
-      refundedCount: payments.filter((p) => p.paymentStatus === 'REFUNDED').length,
-      totalVerifiedCollectionsINR: payments
-        .filter((p) => p.paymentStatus === 'SUCCESS')
-        .reduce((sum, p) => sum + p.amount, 0)
-    };
 
     const razorpayStats = {
       totalTransactions: razorpayPayments.length,
@@ -81,9 +65,6 @@ export default async function handler(req: any, res: any) {
     return res.end(
       JSON.stringify({
         ok: true,
-        stats,
-        payments,
-        webhookEvents,
         razorpayStats,
         razorpayPayments,
         razorpayWebhooks
@@ -105,7 +86,6 @@ export default async function handler(req: any, res: any) {
 
     const action = String(body.action || '').trim();
 
-    // Razorpay Admin Actions
     if (action === 'razorpay_reconcile') {
       const orderId = String(body.orderId || '').trim();
       if (!orderId) {
@@ -147,42 +127,6 @@ export default async function handler(req: any, res: any) {
       });
       res.statusCode = result.statusCode;
       return res.end(JSON.stringify(result));
-    }
-
-    // Preserved PayU Admin Actions
-    const txnid = String(body.txnid || '').trim();
-    if (!txnid) {
-      res.statusCode = 400;
-      return res.end(JSON.stringify({ ok: false, error: 'missing_txnid' }));
-    }
-
-    if (action === 'reconcile') {
-      const result = await reconcilePayUTransaction(txnid);
-      res.statusCode = result.statusCode;
-      return res.end(JSON.stringify(result));
-    }
-
-    if (action === 'mark_refund_pending' || action === 'mark_refunded') {
-      const rec = await payuStore.getPaymentByTxnId(txnid);
-      if (!rec) {
-        res.statusCode = 404;
-        return res.end(JSON.stringify({ ok: false, error: 'not_found' }));
-      }
-      if (rec.paymentStatus !== 'SUCCESS' && rec.paymentStatus !== 'REFUND_PENDING') {
-        res.statusCode = 400;
-        return res.end(
-          JSON.stringify({
-            ok: false,
-            error: 'invalid_refund_state',
-            message: 'Only verified SUCCESS or REFUND_PENDING transactions can transition to refund states.'
-          })
-        );
-      }
-      rec.paymentStatus = action === 'mark_refunded' ? 'REFUNDED' : 'REFUND_PENDING';
-      rec.updatedAt = new Date().toISOString();
-      await payuStore.savePayment(rec);
-      res.statusCode = 200;
-      return res.end(JSON.stringify({ ok: true, payment: rec }));
     }
 
     res.statusCode = 400;

@@ -13,7 +13,6 @@
     "test": "tsx scripts/verify-portal.ts",
     "test:seo": "tsx scripts/verify-seo.ts",
     "test:crm": "tsx scripts/verify-crm.ts",
-    "test:payu": "tsx scripts/verify-payu.ts",
     "test:razorpay": "tsx scripts/verify-razorpay.ts",
     "test:rules": "tsx scripts/firestore.rules.test.ts"
   },

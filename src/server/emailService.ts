@@ -5,7 +5,7 @@
  * application confirmations, and approval/rejection notices via SendGrid.
  *
  * SECURITY RULE: Payment success emails MUST ONLY be dispatched after independent
- * server-side PayU hash + verify_payment reconciliation confirms status === 'SUCCESS'.
+ * server-side Razorpay HMAC-SHA256 verification and capture confirmation (status === 'CAPTURED').
  */
 
 export type FranchiseEmailEvent =
@@ -65,7 +65,7 @@ function buildEmailContent(payload: TransactionalEmailPayload): { subject: strin
       : 'As applicable per invoice';
   const safeTxn = escapeHtml(payload.txnId || '');
   const safeGatewayRef = escapeHtml(payload.payuTransactionId || '');
-  const safeGateway = escapeHtml(payload.gatewayName || 'PayU India');
+  const safeGateway = escapeHtml(payload.gatewayName || 'Razorpay');
   const safeReceipt = escapeHtml(payload.receiptNumber || '');
   const safeReason = escapeHtml(payload.reason || '');
 

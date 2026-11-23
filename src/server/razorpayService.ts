@@ -312,12 +312,10 @@ export function getRazorpayConfigStatus(): RazorpayConfigStatus {
     ((mode === 'test' && keyId.startsWith('rzp_live_')) ||
       (mode === 'live' && keyId.startsWith('rzp_test_')));
 
-  const rawGstMode = (process.env.RAZORPAY_GST_MODE || process.env.PAYU_GST_MODE || 'not_applicable')
-    .toLowerCase()
-    .trim();
+  const rawGstMode = (process.env.RAZORPAY_GST_MODE || 'not_applicable').toLowerCase().trim();
   const gstMode: 'excluded' | 'included' | 'not_applicable' =
     rawGstMode === 'excluded' || rawGstMode === 'included' ? rawGstMode : 'not_applicable';
-  const rawGstRate = Number(process.env.RAZORPAY_GST_RATE_PERCENT || process.env.PAYU_GST_RATE_PERCENT || '18');
+  const rawGstRate = Number(process.env.RAZORPAY_GST_RATE_PERCENT || '18');
   const gstRatePercent = gstMode === 'not_applicable' || !Number.isFinite(rawGstRate) ? 0 : rawGstRate;
 
   return {

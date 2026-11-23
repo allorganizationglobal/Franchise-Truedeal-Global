@@ -1,7 +1,7 @@
 /**
  * TRUEDEAL GLOBAL — Server-Side Authoritative Franchise Plan Pricing Catalog
  *
- * All PayU payment initiation amounts MUST be computed exclusively on the server
+ * All Razorpay order amounts MUST be computed exclusively on the server
  * from this authoritative catalog (or protected admin-managed Firestore records).
  * Browser-submitted prices or totals are NEVER trusted.
  */
@@ -164,19 +164,17 @@ export interface ServerFeeCalculation {
 
 /**
  * Computes authoritative server-side INR amount (rupees and paise) formatted strictly
- * for both Razorpay Orders API (integer paise >= 100) and PayU SHA-512 hash validation.
+ * for the Razorpay Orders API (integer paise >= 100).
  */
 export function calculateServerPlanAmount(planId: string): ServerFeeCalculation | null {
   const plan = getAuthoritativePlan(planId);
   if (!plan) return null;
 
   // Server-controlled GST policy via environment variables (default: base price without fabricating unconfirmed tax)
-  const rawMode = (process.env.RAZORPAY_GST_MODE || process.env.PAYU_GST_MODE || 'not_applicable')
-    .toLowerCase()
-    .trim();
+  const rawMode = (process.env.RAZORPAY_GST_MODE || 'not_applicable').toLowerCase().trim();
   const gstMode: 'excluded' | 'included' | 'not_applicable' =
     rawMode === 'excluded' || rawMode === 'included' ? rawMode : 'not_applicable';
-  const rawRate = Number(process.env.RAZORPAY_GST_RATE_PERCENT || process.env.PAYU_GST_RATE_PERCENT || '18');
+  const rawRate = Number(process.env.RAZORPAY_GST_RATE_PERCENT || '18');
   const gstRatePercent = gstMode === 'not_applicable' || !Number.isFinite(rawRate) || rawRate < 0 ? 0 : rawRate;
 
   let baseAmountINR = plan.priceINR;
