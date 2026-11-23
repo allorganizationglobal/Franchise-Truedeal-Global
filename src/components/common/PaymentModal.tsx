@@ -80,6 +80,12 @@ export function PaymentModal({
   const plan = getPlanById(application.planId);
   const feeBreakdown = calculateFeeBreakdownINR(amount, config);
 
+  const [fallbackApplicationId] = useState<string>(
+    () => `TDG-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
+  );
+  const effectiveApplicationId =
+    application.id && application.id !== 'PENDING' ? application.id : fallbackApplicationId;
+
   const [activeMode, setActiveMode] = useState<'razorpay' | 'bank_upi'>('razorpay');
 
   const cleanInitialField = (value: string | undefined, placeholders: string[]) => {
@@ -135,7 +141,7 @@ export function PaymentModal({
     setPayerPhone((prev) =>
       prev || cleanInitialField(application.applicant.phone, ['+91-9317194033'])
     );
-  }, [isOpen, currentUser, application.id]);
+  }, [isOpen, currentUser, effectiveApplicationId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -205,7 +211,7 @@ export function PaymentModal({
   ): PaymentRecord => {
     const record: PaymentRecord = {
       id: `rzp_${orderId}`,
-      applicationId: application.id,
+      applicationId: effectiveApplicationId,
       type: paymentType,
       amount: details.amountINR ?? feeBreakdown.totalPayableINR,
       currency: 'INR',
@@ -229,7 +235,7 @@ export function PaymentModal({
       paymentMethodDetails: details.paymentMethodDetails,
       failureReason: details.failureReason
     };
-    FranchiseStorageService.addPayment(application.id, record);
+    FranchiseStorageService.addPayment(effectiveApplicationId, record);
     return record;
   };
 
@@ -324,19 +330,11 @@ export function PaymentModal({
       return;
     }
 
-    if (!application.id || application.id === 'PENDING') {
-      setRzpBanner({
-        state: 'failed',
-        title: 'Submit Application First',
-        message: 'Please complete Step 6 and submit your franchise application first to generate an official Application Reference ID before paying online.'
-      });
-      return;
-    }
-
-    // Persist confirmed applicant contact details locally and unlock tracker view for this session
+    // Persist confirmed applicant contact details locally under a valid Application Reference ID and unlock tracker view
     try {
       FranchiseStorageService.saveApplication({
         ...application,
+        id: effectiveApplicationId,
         userId: currentUser?.uid || application.userId,
         applicant: {
           ...application.applicant,
@@ -344,9 +342,11 @@ export function PaymentModal({
           email: cleanEmail,
           phone: cleanPhone
         },
+        status: application.status === 'draft' ? 'PAYMENT_PENDING' : application.status,
+        paymentStatus: application.paymentStatus || 'PAYMENT_PENDING',
         updatedAt: new Date().toISOString()
       });
-      sessionStorage.setItem(`tdg_auth_${application.id}`, 'true');
+      sessionStorage.setItem(`tdg_auth_${effectiveApplicationId}`, 'true');
     } catch {
       // Non-blocking local update
     }
@@ -373,7 +373,7 @@ export function PaymentModal({
         method: 'POST',
         headers: createHeaders,
         body: JSON.stringify({
-          applicationId: application.id,
+          applicationId: effectiveApplicationId,
           planId: application.planId,
           paymentPurpose: paymentType,
           applicantName: cleanName,
@@ -418,7 +418,7 @@ export function PaymentModal({
       if (checkoutToken) {
         try {
           sessionStorage.setItem(`tdg_rzp_token_${order.id}`, checkoutToken);
-          sessionStorage.setItem(`tdg_rzp_latest_app_${application.id}`, JSON.stringify({ orderId: order.id, checkoutToken }));
+          sessionStorage.setItem(`tdg_rzp_latest_app_${effectiveApplicationId}`, JSON.stringify({ orderId: order.id, checkoutToken }));
         } catch {
           // Non-blocking sessionStorage cache
         }
@@ -462,7 +462,7 @@ export function PaymentModal({
         amount: order.amount,
         currency: 'INR',
         name: order.businessName || 'TRUEDEAL GLOBAL OPC PVT LTD',
-        description: order.description || `${plan?.title || application.planId} — #${application.id}`,
+        description: order.description || `${plan?.title || application.planId} — #${effectiveApplicationId}`,
         order_id: order.id,
         prefill: {
           name: order.prefill?.name || cleanName,
@@ -470,7 +470,7 @@ export function PaymentModal({
           contact: order.prefill?.contact || cleanPhone
         },
         notes: order.notes || {
-          applicationId: application.id,
+          applicationId: effectiveApplicationId,
           planId: application.planId
         },
         theme: {
@@ -529,7 +529,7 @@ export function PaymentModal({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
-                applicationId: application.id,
+                applicationId: effectiveApplicationId,
                 checkoutToken
               })
             });
@@ -555,7 +555,7 @@ export function PaymentModal({
                 `Payment Successful (₹${capturedRecord.amount.toLocaleString('en-IN')} INR)`,
                 `Razorpay Payment ${response.razorpay_payment_id} verified & captured. Receipt: ${capturedRecord.receiptNumber}. Franchise application remains queued for administrative approval.`,
                 'success',
-                application.id
+                effectiveApplicationId
               );
 
               playApprovalSuccessSound();
@@ -704,7 +704,7 @@ export function PaymentModal({
       // Offline bank/UPI references are ALWAYS recorded as 'processing' pending manual bank statement verification.
       const newPayment: PaymentRecord = {
         id: 'pay_' + Math.random().toString(36).substring(2, 9),
-        applicationId: application.id,
+        applicationId: effectiveApplicationId,
         type: paymentType,
         amount: totalPayable,
         currency,
@@ -725,10 +725,10 @@ export function PaymentModal({
         totalWithGst: totalPayable
       };
 
-      FranchiseStorageService.addPayment(application.id, newPayment);
+      FranchiseStorageService.addPayment(effectiveApplicationId, newPayment);
 
       FranchiseStorageService.updateApplicationStatus(
-        application.id,
+        effectiveApplicationId,
         application.status,
         application.applicant.email,
         'applicant',
@@ -739,7 +739,7 @@ export function PaymentModal({
         `Payment Reference Submitted (${currencySymbol}${totalPayable.toLocaleString('en-IN')} ${currency})`,
         `Reference ${newPayment.referenceCode} recorded as Pending Bank Verification. Our accounts team reconciles bank credits within 1–2 business days.`,
         'info',
-        application.id
+        effectiveApplicationId
       );
 
       playApprovalSuccessSound();
@@ -770,7 +770,7 @@ export function PaymentModal({
           <OfficialReceiptCard
             receipt={{
               receiptNumber: verifiedRazorpayPayment.receiptNumber,
-              applicationId: application.id,
+              applicationId: effectiveApplicationId,
               applicantName: payerName.trim() || application.applicant.fullName || 'Franchise Applicant',
               applicantEmail: (currentUser?.email || payerEmail || application.applicant.email || '').trim(),
               applicantPhone: (payerPhone || application.applicant.phone || '').trim(),
@@ -811,7 +811,7 @@ export function PaymentModal({
                     {paymentType === 'application_fee' ? 'Application Verification Fee' : 'Franchise Package Fee'}
                   </h3>
                   <span className="text-xs text-slate-500 dark:text-slate-400">
-                    App #{application.id} · {plan?.title || application.planId}
+                    App #{effectiveApplicationId} · {plan?.title || application.planId}
                   </span>
                 </div>
                 <div className="text-right shrink-0">

@@ -117,6 +117,11 @@ export function ApplicationWizard({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [duplicateAppWarning, setDuplicateAppWarning] = useState<{ id: string; status: string } | null>(null);
 
+  // Stable official Application Reference ID reserved for this wizard session (used by both Step 5 Razorpay Checkout & Step 6 submission)
+  const [wizardApplicationId, setWizardApplicationId] = useState<string>(
+    () => `TDG-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`
+  );
+
   // Payment
   const [paymentCompleted, setPaymentCompleted] = useState<boolean>(false);
   const [paymentRecord, setPaymentRecord] = useState<PaymentRecord | null>(null);
@@ -147,6 +152,7 @@ export function ApplicationWizard({
   const handleSaveDraft = () => {
     const draftPayload = {
       savedAt: new Date().toISOString(),
+      wizardApplicationId,
       currentStep,
       selectedPlanId,
       currentCurrency,
@@ -196,6 +202,9 @@ export function ApplicationWizard({
       if (draft.postalCode) setPostalCode(draft.postalCode);
       if (draft.territoryRequested) setTerritoryRequested(draft.territoryRequested);
       if (draft.preferredStartDate) setPreferredStartDate(draft.preferredStartDate);
+      if (draft.wizardApplicationId && draft.wizardApplicationId !== 'PENDING') {
+        setWizardApplicationId(draft.wizardApplicationId);
+      }
       if (draft.selectedPlanId) setSelectedPlanId(draft.selectedPlanId);
       if (draft.currentStep) setCurrentStep(draft.currentStep);
       setSavedDraftExists(false);
@@ -284,7 +293,74 @@ export function ApplicationWizard({
     operationalExperienceYears
   );
 
-  // Final Submit (always starts in 'submitted' pending manual compliance review)
+  const buildWizardApplicationRecord = (
+    appId: string,
+    overrides: Partial<FranchiseApplication> = {}
+  ): FranchiseApplication => {
+    const nowIso = new Date().toISOString();
+    const existing = FranchiseStorageService.getApplicationById(appId);
+    const mergedPayments: PaymentRecord[] = [...(existing?.payments || [])];
+    if (paymentRecord && !mergedPayments.some((p) => p.id === paymentRecord.id)) {
+      mergedPayments.push(paymentRecord);
+    }
+    const hasVerifiedCapture =
+      paymentRecord?.status === 'completed' ||
+      mergedPayments.some((p) => p.status === 'completed' || p.captureStatus === 'captured') ||
+      existing?.paymentStatus === 'CAPTURED' ||
+      existing?.paymentStatus === 'SUCCESS';
+
+    return {
+      id: appId,
+      userId: currentUser?.uid || existing?.userId,
+      createdAt: existing?.createdAt || nowIso,
+      updatedAt: nowIso,
+      applicant: {
+        fullName: fullName.trim() || currentUser?.displayName || '',
+        email: email.trim() || currentUser?.email || '',
+        phone: phone.trim(),
+        companyName: companyName.trim(),
+        country: country.trim() || 'India',
+        stateProvince: stateProvince.trim(),
+        city: city.trim(),
+        postalCode: postalCode.trim(),
+        entityType
+      },
+      financials: {
+        liquidCapital,
+        netWorth,
+        creditScoreTier,
+        fundingSource
+      },
+      planId: selectedPlanId,
+      currency: currentCurrency,
+      amount: selectedFeeBreakdown.totalPayableINR,
+      paymentStatus: hasVerifiedCapture ? 'CAPTURED' : existing?.paymentStatus || 'PAYMENT_PENDING',
+      territoryRequested: territoryRequested.trim() || 'India — Primary Territory',
+      preferredStartDate,
+      operationalExperienceYears,
+      businessBackgroundSummary: businessBackgroundSummary.trim(),
+      status: hasVerifiedCapture ? 'submitted' : 'PAYMENT_PENDING',
+      automatedEvaluation: previewScore,
+      documents,
+      payments: mergedPayments,
+      reviewNotes: existing?.reviewNotes || [],
+      applicantBiometricEnrollment: applicantBiometrics || undefined,
+      ...overrides
+    };
+  };
+
+  const handleOpenStep5PaymentModal = () => {
+    const draftApp = buildWizardApplicationRecord(wizardApplicationId);
+    FranchiseStorageService.saveApplication(draftApp);
+    try {
+      sessionStorage.setItem(`tdg_auth_${wizardApplicationId}`, 'true');
+    } catch {
+      // Non-blocking session cache
+    }
+    setShowPaymentModal(true);
+  };
+
+  // Final Submit (always enters manual compliance review; never auto-approves)
   const handleFinalSubmit = async (bypassDuplicateCheck = false) => {
     setValidationError(null);
 
@@ -308,6 +384,7 @@ export function ApplicationWizard({
       const existingApps = FranchiseStorageService.getApplications();
       const duplicate = existingApps.find(
         (a) =>
+          a.id !== wizardApplicationId &&
           a.applicant.email.toLowerCase() === email.trim().toLowerCase() &&
           a.planId === selectedPlanId &&
           !['rejected', 'declined'].includes(a.status)
@@ -320,7 +397,7 @@ export function ApplicationWizard({
 
     setIsSubmitting(true);
 
-    const applicationId = 'TDG-2026-' + Math.floor(1000 + Math.random() * 9000);
+    const applicationId = wizardApplicationId;
     const finalScore = evaluateFranchiseApplication(
       selectedPlan,
       { liquidCapital, netWorth, creditScoreTier, fundingSource },
@@ -328,45 +405,11 @@ export function ApplicationWizard({
     );
     const nowIso = new Date().toISOString();
 
-    const newApp: FranchiseApplication = {
-      id: applicationId,
-      userId: currentUser?.uid,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      applicant: {
-        fullName: fullName.trim(),
-        email: email.trim(),
-        phone: phone.trim(),
-        companyName: companyName.trim(),
-        country: country.trim() || 'India',
-        stateProvince: stateProvince.trim(),
-        city: city.trim(),
-        postalCode: postalCode.trim(),
-        entityType
-      },
-      financials: {
-        liquidCapital,
-        netWorth,
-        creditScoreTier,
-        fundingSource
-      },
-      planId: selectedPlanId,
-      currency: currentCurrency,
-      amount: selectedFeeBreakdown.totalPayableINR,
-      paymentStatus: 'PAYMENT_PENDING',
-      territoryRequested: territoryRequested.trim(),
-      preferredStartDate,
-      operationalExperienceYears,
-      businessBackgroundSummary: businessBackgroundSummary.trim(),
-      // Enters PAYMENT_PENDING (awaiting Razorpay capture verification or manual bank reconciliation)
-      status: paymentRecord ? 'submitted' : 'PAYMENT_PENDING',
+    const newApp = buildWizardApplicationRecord(applicationId, {
       automatedEvaluation: finalScore,
-      documents,
-      payments: paymentRecord ? [paymentRecord] : [],
-      reviewNotes: [],
-      applicantBiometricEnrollment: applicantBiometrics || undefined,
+      status: paymentRecord ? 'submitted' : 'PAYMENT_PENDING',
       policyConsentAcceptedAt: nowIso
-    };
+    });
 
     // Best-effort server-side CRM lead ingestion (secret key stays strictly on server)
     try {
@@ -1177,21 +1220,37 @@ export function ApplicationWizard({
                 {!paymentCompleted ? (
                   <div className="space-y-3 pt-1">
                     <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
-                      Submit your application in Step 6 to receive your Application Reference ID, then pay securely via{' '}
-                      <strong>Razorpay Standard Checkout</strong> (UPI, Cards, NetBanking, Wallets) — or optionally
-                      record a Corporate Bank / UPI UTR reference below.
+                      Pay directly now via <strong>Razorpay Standard Checkout</strong> (UPI, Cards, NetBanking, Wallets)
+                      using your reserved Application Reference ID{' '}
+                      <strong className="font-mono text-slate-800 dark:text-slate-200">{wizardApplicationId}</strong>{' '}
+                      — or record a Corporate Bank / UPI UTR reference below, or continue to Step 6 and pay after final submission.
                     </p>
                     <button
                       type="button"
-                      onClick={() => setShowPaymentModal(true)}
-                      className="py-2.5 px-4 bg-slate-900 dark:bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      onClick={handleOpenStep5PaymentModal}
+                      className="py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
                     >
-                      <QrCode className="w-4 h-4" />
-                      <span>Preview Razorpay / Bank Payment Options (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
+                      <CreditCard className="w-4 h-4" />
+                      <span>Pay Now via Razorpay / Bank Options (₹{selectedFeeBreakdown.totalPayableINR.toLocaleString('en-IN')})</span>
                     </button>
                   </div>
+                ) : paymentRecord?.status === 'completed' ? (
+                  <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div>
+                        <span className="font-bold block">Payment Verified &amp; Captured via Razorpay</span>
+                        <span className="text-[11px] font-mono">
+                          Payment ID: {paymentRecord.razorpayPaymentId || paymentRecord.referenceCode} · Receipt: {paymentRecord.receiptNumber}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="text-xs font-mono font-bold shrink-0">
+                      ₹{(paymentRecord.amount || selectedFeeBreakdown.totalPayableINR).toLocaleString('en-IN')}
+                    </span>
+                  </div>
                 ) : (
-                  <div className="p-4 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between">
+                  <div className="p-4 bg-amber-50 dark:bg-amber-950/40 rounded-xl border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5">
                       <Clock className="w-5 h-5 text-amber-600 shrink-0" />
                       <div>
@@ -1201,7 +1260,7 @@ export function ApplicationWizard({
                         </span>
                       </div>
                     </div>
-                    <span className="text-xs font-mono font-bold">
+                    <span className="text-xs font-mono font-bold shrink-0">
                       ₹{(paymentRecord?.amount || selectedFeeBreakdown.totalPayableINR).toLocaleString('en-IN')}
                     </span>
                   </div>
@@ -1504,28 +1563,7 @@ export function ApplicationWizard({
         <PaymentModal
           isOpen={showPaymentModal}
           onClose={() => setShowPaymentModal(false)}
-          application={
-            submissionResult || {
-              id: 'PENDING',
-              userId: currentUser?.uid,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              applicant: { fullName, email, phone, companyName, country, stateProvince, city, postalCode, entityType },
-              financials: { liquidCapital, netWorth, creditScoreTier, fundingSource },
-              planId: selectedPlanId,
-              amount: selectedFeeBreakdown.totalPayableINR,
-              paymentStatus: 'PAYMENT_PENDING',
-              territoryRequested,
-              preferredStartDate,
-              operationalExperienceYears,
-              businessBackgroundSummary,
-              status: 'draft',
-              automatedEvaluation: previewScore,
-              documents: [],
-              payments: [],
-              reviewNotes: []
-            }
-          }
+          application={submissionResult || buildWizardApplicationRecord(wizardApplicationId)}
           paymentType="franchise_deposit"
           amount={selectedPlan.priceINR}
           currency="INR"
@@ -1535,6 +1573,18 @@ export function ApplicationWizard({
           onPaymentSuccess={(rec) => {
             setPaymentCompleted(true);
             setPaymentRecord(rec);
+            if (submissionResult) {
+              const refreshed = FranchiseStorageService.getApplicationById(submissionResult.id);
+              if (refreshed) {
+                setSubmissionResult(refreshed);
+              } else {
+                setSubmissionResult({
+                  ...submissionResult,
+                  paymentStatus: rec.status === 'completed' ? 'CAPTURED' : submissionResult.paymentStatus,
+                  payments: [...submissionResult.payments.filter((p) => p.id !== rec.id), rec]
+                });
+              }
+            }
           }}
         />
       )}
