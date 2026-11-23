@@ -3,7 +3,6 @@
   "framework": "vite",
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "cleanUrls": true,
   "trailingSlash": false,
   "redirects": [
     {
@@ -20,7 +19,7 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!api/|assets/|robots\\.txt|sitemap\\.xml).*)",
+      "source": "/((?!api/|assets/).*)",
       "destination": "/index.html"
     }
   ],
