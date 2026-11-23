@@ -24,6 +24,8 @@ import {
 } from '../src/server/razorpayService';
 import adminPaymentsHandler from '../api/admin/payments';
 import razorpayWebhookHandler from '../api/webhooks/razorpay';
+import createOrderHandler from '../api/create-order';
+import verifyPaymentHandler from '../api/verify-payment';
 
 const TEST_KEY_ID = 'rzp_test_U3VIznAN282H0E';
 const TEST_KEY_SECRET = 'local_unit_test_secret_not_real_12345';
@@ -833,6 +835,89 @@ async function main() {
     assert.match(envExample, /RAZORPAY_WEBHOOK_SECRET=""/);
     assert.match(envExample, /RAZORPAY_MODE="test"/);
     assert.ok(forbiddenPatterns.length > 0);
+  });
+
+  await runTest('16. Direct applicant checkout (no Google Sign-In) & stateless serverless checkoutToken verification', async () => {
+    resetEnvAndState();
+    setRazorpayApiClientOverride(
+      createMockRazorpayClient({
+        paymentStatus: 'captured',
+        paymentCaptured: true,
+        paymentAmount: 499900
+      })
+    );
+
+    // 1. Create order via /api/create-order WITHOUT Authorization header using Name, Email, Phone
+    const createRes = createMockRes();
+    await createOrderHandler(
+      {
+        method: 'POST',
+        headers: {},
+        body: {
+          applicationId: 'TDG-2026-5001',
+          planId: 'plan_standard',
+          applicantName: 'Direct Applicant',
+          email: 'direct.applicant@example.com',
+          phone: '+919876543210',
+          termsAccepted: true
+        }
+      },
+      createRes
+    );
+    assert.equal(createRes.statusCode, 201);
+    const createdPayload = JSON.parse(createRes.body);
+    assert.equal(createdPayload.ok, true);
+    assert.ok(createdPayload.order?.id);
+    assert.ok(createdPayload.checkoutToken, 'Must return server-signed checkoutToken');
+
+    const orderId = createdPayload.order.id as string;
+    const checkoutToken = createdPayload.checkoutToken as string;
+    const payId = 'pay_DirectGuest001';
+    const validSig = computeRazorpayPaymentSignature(orderId, payId, TEST_KEY_SECRET);
+
+    // 2. Clear in-memory store to simulate a cold separate Vercel serverless container
+    getRazorpayPersistenceAdapter().clear?.();
+
+    // 3. Tampered checkoutToken must be rejected with 401
+    const tamperedRes = createMockRes();
+    await verifyPaymentHandler(
+      {
+        method: 'POST',
+        headers: {},
+        body: {
+          razorpay_order_id: orderId,
+          razorpay_payment_id: payId,
+          razorpay_signature: validSig,
+          applicationId: 'TDG-2026-5001',
+          checkoutToken: `${checkoutToken.slice(0, -4)}ffff`
+        }
+      },
+      tamperedRes
+    );
+    assert.equal(tamperedRes.statusCode, 401);
+
+    // 4. Valid server-signed checkoutToken + valid Razorpay HMAC signature succeeds on cold container
+    const verifyRes = createMockRes();
+    await verifyPaymentHandler(
+      {
+        method: 'POST',
+        headers: {},
+        body: {
+          razorpay_order_id: orderId,
+          razorpay_payment_id: payId,
+          razorpay_signature: validSig,
+          applicationId: 'TDG-2026-5001',
+          checkoutToken
+        }
+      },
+      verifyRes
+    );
+    assert.equal(verifyRes.statusCode, 200);
+    const verifiedPayload = JSON.parse(verifyRes.body);
+    assert.equal(verifiedPayload.ok, true);
+    assert.equal(verifiedPayload.verified, true);
+    assert.equal(verifiedPayload.captured, true);
+    assert.equal(verifiedPayload.paymentStatus, 'CAPTURED');
   });
 
   setRazorpayApiClientOverride(null);

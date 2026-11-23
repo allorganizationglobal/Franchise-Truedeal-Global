@@ -176,7 +176,22 @@ export async function signInWithGoogle(): Promise<FirebaseUser | null> {
 
     if (errorCode === 'auth/popup-blocked') {
       console.warn('Google sign-in popup was blocked by the browser.');
-      throw new Error('Sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+      throw new Error('Sign-in popup was blocked by your browser. Please allow popups for this site and try again, or proceed directly with Razorpay Checkout using your Name, Email, and Mobile Number.');
+    }
+
+    if (errorCode === 'auth/unauthorized-domain' || errorMessage.includes('unauthorized-domain')) {
+      const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+      console.warn(`Firebase Google Sign-In unauthorized domain: ${host}`);
+      throw new Error(
+        `Google Sign-In is not yet authorized for "${host}". Add "${host}" under Firebase Console → Authentication → Settings → Authorized domains. You can still pay immediately via Razorpay Checkout below using your Name, Email, and Mobile Number.`
+      );
+    }
+
+    if (errorCode === 'auth/operation-not-allowed') {
+      console.warn('Google sign-in provider is not enabled in Firebase Authentication.');
+      throw new Error(
+        'Google Sign-In is not currently enabled for this domain. You can still complete Razorpay Checkout directly using your Name, Email, and Mobile Number.'
+      );
     }
 
     console.warn('Firebase Google Sign-In warning:', error);

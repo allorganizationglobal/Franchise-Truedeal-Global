@@ -38,7 +38,7 @@ interface PaymentModalProps {
   amount: number;
   currency?: Currency;
   currentUser?: FirebaseUser | null;
-  onSignInGoogle?: () => void;
+  onSignInGoogle?: () => void | Promise<void | { ok: boolean; error?: string }>;
   onPaymentSuccess?: (payment: PaymentRecord) => void;
   onNavigate?: (tab: string) => void;
 }
@@ -81,6 +81,12 @@ export function PaymentModal({
 
   const [activeMode, setActiveMode] = useState<'razorpay' | 'bank_upi'>('razorpay');
 
+  const cleanInitialField = (value: string | undefined, placeholders: string[]) => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return '';
+    return placeholders.includes(trimmed.toLowerCase()) ? '' : trimmed;
+  };
+
   // Razorpay Standard Checkout state
   const [rzpConfig, setRzpConfig] = useState<RazorpayStatusConfig | null>(null);
   const [loadingRzpConfig, setLoadingRzpConfig] = useState(false);
@@ -91,15 +97,44 @@ export function PaymentModal({
   const [hasFailedOrCancelledAttempt, setHasFailedOrCancelledAttempt] = useState(false);
   const rzpClickLockRef = useRef(false);
 
+  // Applicant details for direct Razorpay Checkout (works with or without Google Sign-In)
+  const [payerName, setPayerName] = useState(() =>
+    cleanInitialField(currentUser?.displayName || application.applicant.fullName, ['franchise applicant'])
+  );
+  const [payerEmail, setPayerEmail] = useState(() =>
+    cleanInitialField(currentUser?.email || application.applicant.email, ['applicant@truedealglobal.com'])
+  );
+  const [payerPhone, setPayerPhone] = useState(() =>
+    cleanInitialField(application.applicant.phone, ['+91-9317194033'])
+  );
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
+
   // Corporate Bank / UPI Transfer state (preserved)
   const [selectedQrTab, setSelectedQrTab] = useState<'bob' | 'idbi'>('bob');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [utrNumber, setUtrNumber] = useState<string>('');
-  const [billingName, setBillingName] = useState(application.applicant.fullName);
+  const [billingName, setBillingName] = useState(
+    cleanInitialField(currentUser?.displayName || application.applicant.fullName, ['franchise applicant'])
+  );
   const [policyAccepted, setPolicyAccepted] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [processing, setProcessing] = useState(false);
   const [submittedPayment, setSubmittedPayment] = useState<PaymentRecord | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setSignInError(null);
+    setPayerName((prev) =>
+      prev || cleanInitialField(currentUser?.displayName || application.applicant.fullName, ['franchise applicant'])
+    );
+    setPayerEmail((prev) =>
+      currentUser?.email || prev || cleanInitialField(application.applicant.email, ['applicant@truedealglobal.com'])
+    );
+    setPayerPhone((prev) =>
+      prev || cleanInitialField(application.applicant.phone, ['+91-9317194033'])
+    );
+  }, [isOpen, currentUser, application.id]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -108,7 +143,10 @@ export function PaymentModal({
     setLoadingRzpConfig(true);
 
     fetch('/api/payments/razorpay/status?mode=config')
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error('Config endpoint returned non-200');
+        return res.json();
+      })
       .then((data) => {
         if (active && data?.config) {
           setRzpConfig({
@@ -120,6 +158,8 @@ export function PaymentModal({
             gstMode: data.config.gstMode || 'not_applicable',
             gstRatePercent: Number(data.config.gstRatePercent || 0)
           });
+        } else if (active) {
+          setRzpConfig(null);
         }
       })
       .catch(() => {
@@ -179,7 +219,7 @@ export function PaymentModal({
       referenceCode: details.paymentId || orderId,
       timestamp: details.timestamp || new Date().toISOString(),
       receiptNumber: details.receiptNumber || 'PENDING-RAZORPAY-VERIFICATION',
-      billingName: application.applicant.fullName,
+      billingName: payerName.trim() || application.applicant.fullName || 'Franchise Applicant',
       baseAmount: details.baseAmountINR ?? feeBreakdown.baseFeeINR,
       gstAmount: details.gstAmountINR ?? feeBreakdown.gstAmountINR,
       totalWithGst: details.amountINR ?? feeBreakdown.totalPayableINR,
@@ -193,24 +233,26 @@ export function PaymentModal({
   };
 
   const reportClientCheckoutOutcome = async (
-    idToken: string,
+    idToken: string | null,
+    checkoutToken: string | undefined,
     orderId: string,
     outcome: 'cancelled' | 'failed',
     reason: string,
     paymentId?: string
   ) => {
     try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (idToken) headers.Authorization = `Bearer ${idToken}`;
+      if (checkoutToken) headers['X-Checkout-Token'] = checkoutToken;
       await fetch('/api/payments/razorpay/status', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
+        headers,
         body: JSON.stringify({
           razorpayOrderId: orderId,
           outcome,
           reason,
-          razorpayPaymentId: paymentId
+          razorpayPaymentId: paymentId,
+          checkoutToken
         })
       });
     } catch {
@@ -218,14 +260,56 @@ export function PaymentModal({
     }
   };
 
+  const handleOptionalGoogleSignIn = async () => {
+    if (!onSignInGoogle || signInBusy) return;
+    setSignInError(null);
+    setSignInBusy(true);
+    try {
+      const res = await onSignInGoogle();
+      if (res && typeof res === 'object' && 'error' in res && res.error) {
+        setSignInError(res.error);
+      }
+    } catch (err: any) {
+      setSignInError(
+        err?.message ||
+          'Google Sign-In could not be completed. You can still pay directly via Razorpay Checkout below.'
+      );
+    } finally {
+      setSignInBusy(false);
+    }
+  };
+
   const handleLaunchRazorpayCheckout = async (forceNewOrder = false) => {
     if (rzpClickLockRef.current || rzpBusy) return;
 
-    if (!currentUser) {
+    const cleanName = payerName.trim();
+    const cleanEmail = (currentUser?.email || payerEmail).trim().toLowerCase();
+    const cleanPhone = payerPhone.trim();
+    const phoneDigits = cleanPhone.replace(/\D/g, '');
+
+    if (cleanName.length < 2 || cleanName.length > 120) {
       setRzpBanner({
         state: 'failed',
-        title: 'Sign-In Required',
-        message: 'Please sign in with your Google account first so your Razorpay payment is cryptographically bound to your applicant account.'
+        title: 'Applicant Name Required',
+        message: 'Please enter your full name (2–120 characters) for your Razorpay payment receipt.'
+      });
+      return;
+    }
+
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Valid Email Required',
+        message: 'Please enter a valid email address so your Razorpay receipt and application ID can be linked.'
+      });
+      return;
+    }
+
+    if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+      setRzpBanner({
+        state: 'failed',
+        title: 'Mobile Number Required',
+        message: 'Please enter a valid mobile number (e.g., +91 98XXXXXXXX) before opening Razorpay Checkout.'
       });
       return;
     }
@@ -248,6 +332,24 @@ export function PaymentModal({
       return;
     }
 
+    // Persist confirmed applicant contact details locally and unlock tracker view for this session
+    try {
+      FranchiseStorageService.saveApplication({
+        ...application,
+        userId: currentUser?.uid || application.userId,
+        applicant: {
+          ...application.applicant,
+          fullName: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone
+        },
+        updatedAt: new Date().toISOString()
+      });
+      sessionStorage.setItem(`tdg_auth_${application.id}`, 'true');
+    } catch {
+      // Non-blocking local update
+    }
+
     rzpClickLockRef.current = true;
     setRzpBusy(true);
     setRzpBanner({
@@ -257,31 +359,25 @@ export function PaymentModal({
     });
 
     try {
-      const idToken = await getFirebaseIdToken();
-      if (!idToken) {
-        setRzpBanner({
-          state: 'failed',
-          title: 'Session Expired',
-          message: 'Unable to obtain a valid Firebase authentication token. Please sign out and sign in again.'
-        });
-        rzpClickLockRef.current = false;
-        setRzpBusy(false);
-        return;
+      const idToken = currentUser ? await getFirebaseIdToken() : null;
+      const createHeaders: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+      if (idToken) {
+        createHeaders.Authorization = `Bearer ${idToken}`;
       }
 
       // Step 1: Create authoritative server-side Razorpay order
       const createRes = await fetch('/api/create-order', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${idToken}`
-        },
+        headers: createHeaders,
         body: JSON.stringify({
           applicationId: application.id,
           planId: application.planId,
           paymentPurpose: paymentType,
-          applicantName: application.applicant.fullName,
-          phone: application.applicant.phone,
+          applicantName: cleanName,
+          email: cleanEmail,
+          phone: cleanPhone,
           termsAccepted: true,
           forceNewOrder: forceNewOrder || hasFailedOrCancelledAttempt
         })
@@ -315,6 +411,7 @@ export function PaymentModal({
 
       const order = createData.order;
       const pricing = createData.pricing;
+      const checkoutToken: string | undefined = typeof createData.checkoutToken === 'string' ? createData.checkoutToken : undefined;
 
       // Record created order in local tracker history immediately
       persistLocalRazorpayAttempt(order.id, 'processing', 'CREATED', {
@@ -357,9 +454,9 @@ export function PaymentModal({
         description: order.description || `${plan?.title || application.planId} — #${application.id}`,
         order_id: order.id,
         prefill: {
-          name: order.prefill?.name || application.applicant.fullName,
-          email: order.prefill?.email || application.applicant.email,
-          contact: order.prefill?.contact || application.applicant.phone
+          name: order.prefill?.name || cleanName,
+          email: order.prefill?.email || cleanEmail,
+          contact: order.prefill?.contact || cleanPhone
         },
         notes: order.notes || {
           applicationId: application.id,
@@ -382,6 +479,7 @@ export function PaymentModal({
             });
             await reportClientCheckoutOutcome(
               idToken,
+              checkoutToken,
               order.id,
               'cancelled',
               'Customer dismissed Razorpay Standard Checkout modal.'
@@ -407,17 +505,21 @@ export function PaymentModal({
           });
 
           try {
+            const verifyHeaders: Record<string, string> = {
+              'Content-Type': 'application/json'
+            };
+            if (idToken) verifyHeaders.Authorization = `Bearer ${idToken}`;
+            if (checkoutToken) verifyHeaders['X-Checkout-Token'] = checkoutToken;
+
             const verifyRes = await fetch('/api/verify-payment', {
               method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${idToken}`
-              },
+              headers: verifyHeaders,
               body: JSON.stringify({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
-                applicationId: application.id
+                applicationId: application.id,
+                checkoutToken
               })
             });
 
@@ -539,7 +641,7 @@ export function PaymentModal({
           failureReason: failReason
         });
 
-        await reportClientCheckoutOutcome(idToken, order.id, 'failed', failReason, failedPaymentId);
+        await reportClientCheckoutOutcome(idToken, checkoutToken, order.id, 'failed', failReason, failedPaymentId);
 
         setRzpBanner({
           state: 'failed',
@@ -842,9 +944,13 @@ export function PaymentModal({
                       >
                         {rzpConfig.mode === 'live' ? 'LIVE READY' : 'TEST MODE READY'}
                       </span>
-                    ) : (
+                    ) : rzpConfig !== null ? (
                       <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 uppercase">
                         KEY SECRET NEEDED
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 uppercase">
+                        SECURE SERVER CHECKOUT
                       </span>
                     )}
                   </div>
@@ -874,7 +980,7 @@ export function PaymentModal({
                         </>
                       ) : (
                         <>
-                          Configure <code className="font-mono">RAZORPAY_KEY_ID</code> and your replacement{' '}
+                          Configure <code className="font-mono">RAZORPAY_KEY_ID</code> and{' '}
                           <code className="font-mono">RAZORPAY_KEY_SECRET</code> in Vercel Environment Variables to
                           activate Razorpay Standard Checkout.
                         </>
@@ -883,29 +989,82 @@ export function PaymentModal({
                   </div>
                 )}
 
-                {/* Authentication Check */}
-                {!currentUser && (
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
-                    <div className="space-y-0.5">
+                {/* Applicant Billing Details (Enables Immediate Checkout Without Requiring Google Sign-In) */}
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 space-y-3 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
                       <span className="font-bold text-slate-900 dark:text-white block">
-                        Google Sign-In Required for Online Payment
+                        Applicant Details for Razorpay Receipt
                       </span>
-                      <span className="text-slate-500 dark:text-slate-400">
-                        Sign in to bind your Razorpay Order ID and verified payment receipt to your account.
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        {currentUser
+                          ? `Signed in as ${currentUser.email}`
+                          : 'Enter your contact details below — no Google Sign-In required to pay.'}
                       </span>
                     </div>
-                    {onSignInGoogle && (
+                    {!currentUser && onSignInGoogle && (
                       <button
                         type="button"
-                        onClick={onSignInGoogle}
-                        className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                        disabled={signInBusy}
+                        onClick={handleOptionalGoogleSignIn}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 hover:bg-white dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-[11px] flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+                        title="Optional: Sign in with Google to sync receipts across devices"
                       >
-                        <LogIn className="w-3.5 h-3.5" />
-                        <span>Sign In</span>
+                        <LogIn className="w-3 h-3" />
+                        <span>{signInBusy ? 'Signing In...' : 'Optional Google Sign-In'}</span>
                       </button>
                     )}
                   </div>
-                )}
+
+                  {signInError && (
+                    <div className="p-2.5 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-900 dark:text-amber-200 leading-relaxed">
+                      {signInError}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Full Name <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={payerName}
+                        onChange={(e) => setPayerName(e.target.value)}
+                        placeholder="Enter applicant full name"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Email Address <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={currentUser?.email || payerEmail}
+                        readOnly={Boolean(currentUser?.email)}
+                        onChange={(e) => setPayerEmail(e.target.value)}
+                        placeholder="you@example.com"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none read-only:opacity-75"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                        Mobile Number <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="tel"
+                        required
+                        value={payerPhone}
+                        onChange={(e) => setPayerPhone(e.target.value)}
+                        placeholder="+91 98XXXXXXXX"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
 
                 {/* Status / Error / Pending Verification Banner */}
                 {rzpBanner && (
@@ -968,7 +1127,6 @@ export function PaymentModal({
                   type="button"
                   disabled={
                     rzpBusy ||
-                    !currentUser ||
                     (rzpConfig !== null && !rzpConfig.configured) ||
                     rzpBanner?.state === 'already_paid' ||
                     rzpBanner?.state === 'pending_verification'

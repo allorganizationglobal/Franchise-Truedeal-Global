@@ -389,6 +389,175 @@ export function verifyRazorpayRawWebhookSignature(
   return timingSafeHexCompare(expected, providedSignature);
 }
 
+// =========================================================================
+// Direct Applicant Checkout Identity & Signed Stateless Order Token
+// =========================================================================
+const EPHEMERAL_CHECKOUT_FALLBACK = crypto.randomBytes(32).toString('hex');
+
+function getCheckoutTokenSecret(): string {
+  return (
+    (process.env.RAZORPAY_KEY_SECRET || '').trim() ||
+    (process.env.SESSION_SECRET || '').trim() ||
+    EPHEMERAL_CHECKOUT_FALLBACK
+  );
+}
+
+/**
+ * Deterministically derives a non-privileged guest applicant UID from their email address
+ * for direct Razorpay checkout without Google Sign-In.
+ */
+export function deriveGuestApplicantUid(email: string): string {
+  const normalized = String(email || '').trim().toLowerCase();
+  const digest = crypto.createHash('sha256').update(`tdg_guest:${normalized}`).digest('hex').slice(0, 20);
+  return `guest_${digest}`;
+}
+
+export interface SignedCheckoutTokenClaims {
+  orderId: string;
+  applicationId: string;
+  userId: string;
+  applicantName: string;
+  email: string;
+  phone: string;
+  planId: string;
+  planTitle: string;
+  paymentPurpose: 'application_fee' | 'franchise_deposit';
+  baseAmountINR: number;
+  gstRatePercent: number;
+  gstAmountINR: number;
+  finalAmountINR: number;
+  amountPaise: number;
+  gstMode: 'excluded' | 'included' | 'not_applicable';
+  orderReceipt: string;
+  mode: 'test' | 'live';
+  exp: number;
+}
+
+/**
+ * Issues a server-signed HMAC-SHA256 checkout token binding an authoritative Razorpay order
+ * to its applicant and server-calculated pricing so verification works cleanly across stateless
+ * Vercel serverless containers and direct (non-Google-signed-in) applicant checkouts.
+ */
+export function createSignedCheckoutToken(record: RazorpayPaymentRecord): string {
+  const claims: SignedCheckoutTokenClaims = {
+    orderId: record.razorpayOrderId,
+    applicationId: record.applicationId,
+    userId: record.userId,
+    applicantName: record.applicantName,
+    email: record.email,
+    phone: record.phone,
+    planId: record.planId,
+    planTitle: record.planTitle,
+    paymentPurpose: record.paymentPurpose,
+    baseAmountINR: record.baseAmountINR,
+    gstRatePercent: record.gstRatePercent,
+    gstAmountINR: record.gstAmountINR,
+    finalAmountINR: record.finalAmountINR,
+    amountPaise: record.amountPaise,
+    gstMode: record.gstMode,
+    orderReceipt: record.orderReceipt,
+    mode: record.mode,
+    exp: Date.now() + 2 * 60 * 60 * 1000 // 2 hours
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
+  const sig = crypto
+    .createHmac('sha256', getCheckoutTokenSecret())
+    .update(`tdg_rzp_checkout:${payloadB64}`)
+    .digest('hex');
+  return `${payloadB64}.${sig}`;
+}
+
+export function verifySignedCheckoutToken(token: string): {
+  valid: boolean;
+  claims?: SignedCheckoutTokenClaims;
+  error?: string;
+} {
+  if (!token || typeof token !== 'string') {
+    return { valid: false, error: 'Missing checkout verification token.' };
+  }
+  const parts = token.trim().split('.');
+  if (parts.length !== 2) {
+    return { valid: false, error: 'Malformed checkout verification token.' };
+  }
+  const [payloadB64, providedSig] = parts;
+  if (!payloadB64 || !providedSig) {
+    return { valid: false, error: 'Malformed checkout verification token.' };
+  }
+
+  const expectedSig = crypto
+    .createHmac('sha256', getCheckoutTokenSecret())
+    .update(`tdg_rzp_checkout:${payloadB64}`)
+    .digest('hex');
+
+  if (!timingSafeHexCompare(expectedSig, providedSig)) {
+    return { valid: false, error: 'Invalid checkout verification token signature.' };
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8')) as SignedCheckoutTokenClaims;
+    if (
+      !parsed ||
+      typeof parsed.orderId !== 'string' ||
+      typeof parsed.applicationId !== 'string' ||
+      typeof parsed.userId !== 'string' ||
+      typeof parsed.amountPaise !== 'number' ||
+      !Number.isInteger(parsed.amountPaise) ||
+      parsed.amountPaise < 100 ||
+      typeof parsed.exp !== 'number'
+    ) {
+      return { valid: false, error: 'Invalid checkout token payload.' };
+    }
+    if (Date.now() > parsed.exp) {
+      return { valid: false, error: 'Checkout verification token has expired.' };
+    }
+    return { valid: true, claims: parsed };
+  } catch {
+    return { valid: false, error: 'Unable to decode checkout verification token.' };
+  }
+}
+
+function hydrateRecordFromSignedClaims(claims: SignedCheckoutTokenClaims, source: 'verify_api' | 'checkout_client'): RazorpayPaymentRecord {
+  const nowIso = new Date().toISOString();
+  return {
+    paymentRecordId: `rzp_${claims.orderId}`,
+    gateway: 'razorpay',
+    applicationId: claims.applicationId,
+    userId: claims.userId,
+    applicantName: claims.applicantName,
+    email: claims.email,
+    phone: claims.phone,
+    planId: claims.planId,
+    planTitle: claims.planTitle,
+    paymentPurpose: claims.paymentPurpose,
+    baseAmountINR: claims.baseAmountINR,
+    gstRatePercent: claims.gstRatePercent,
+    gstAmountINR: claims.gstAmountINR,
+    finalAmountINR: claims.finalAmountINR,
+    amountPaise: claims.amountPaise,
+    currency: 'INR',
+    gstMode: claims.gstMode,
+    razorpayOrderId: claims.orderId,
+    signatureVerified: false,
+    captureStatus: 'unpaid',
+    paymentStatus: 'CREATED',
+    refundStatus: 'none',
+    orderReceipt: claims.orderReceipt,
+    attemptHistory: [
+      {
+        timestamp: nowIso,
+        event: 'order.hydrated_from_signed_token',
+        status: 'CREATED',
+        details: `Hydrated server-signed Razorpay order ${claims.orderId} for ₹${claims.finalAmountINR.toFixed(2)} INR.`,
+        source
+      }
+    ],
+    internalNotes: [],
+    mode: claims.mode,
+    createdAt: nowIso,
+    updatedAt: nowIso
+  };
+}
+
 function getOfficialRazorpayClient(): RazorpayApiClient {
   if (apiClientOverride) {
     return apiClientOverride;
@@ -567,6 +736,7 @@ export interface CreateRazorpayOrderResult {
     gstMode: 'excluded' | 'included' | 'not_applicable';
     currency: 'INR';
   };
+  checkoutToken?: string;
   paymentRecord?: RazorpayPaymentRecord;
 }
 
@@ -730,6 +900,7 @@ export async function createRazorpayOrder(
           gstMode: fee.gstMode,
           currency: 'INR'
         },
+        checkoutToken: createSignedCheckoutToken(reusable),
         paymentRecord: reusable
       };
     }
@@ -849,6 +1020,7 @@ export async function createRazorpayOrder(
       gstMode: fee.gstMode,
       currency: 'INR'
     },
+    checkoutToken: createSignedCheckoutToken(record),
     paymentRecord: record
   };
 }
@@ -861,6 +1033,7 @@ export interface VerifyRazorpayPaymentInput {
   razorpay_payment_id: string;
   razorpay_signature: string;
   applicationId?: string;
+  checkoutToken?: string;
   callerUid: string;
   callerIsAdmin?: boolean;
   clientIp?: string;
@@ -923,8 +1096,15 @@ export async function verifyRazorpayPayment(
     };
   }
 
-  // Strictly look up server-saved order record (never trust unverified client order IDs)
-  const record = await activeStore.getPaymentByOrderId(orderId);
+  // Strictly look up server-saved order record (or hydrate from server-signed checkoutToken across stateless serverless containers)
+  let record = await activeStore.getPaymentByOrderId(orderId);
+  if (!record && input.checkoutToken) {
+    const tokenCheck = verifySignedCheckoutToken(input.checkoutToken);
+    if (tokenCheck.valid && tokenCheck.claims && tokenCheck.claims.orderId === orderId) {
+      record = hydrateRecordFromSignedClaims(tokenCheck.claims, 'verify_api');
+      await activeStore.savePayment(record);
+    }
+  }
   if (!record) {
     return {
       ok: false,
@@ -1205,11 +1385,18 @@ export async function recordClientCheckoutAttemptEvent(params: {
   razorpayOrderId: string;
   callerUid: string;
   callerIsAdmin?: boolean;
+  checkoutToken?: string;
   outcome: 'cancelled' | 'failed';
   reason?: string;
   razorpayPaymentId?: string;
 }): Promise<{ ok: boolean; statusCode: number; paymentRecord?: RazorpayPaymentRecord; message: string }> {
-  const record = await activeStore.getPaymentByOrderId(params.razorpayOrderId);
+  let record = await activeStore.getPaymentByOrderId(params.razorpayOrderId);
+  if (!record && params.checkoutToken) {
+    const tokenCheck = verifySignedCheckoutToken(params.checkoutToken);
+    if (tokenCheck.valid && tokenCheck.claims && tokenCheck.claims.orderId === params.razorpayOrderId) {
+      record = hydrateRecordFromSignedClaims(tokenCheck.claims, 'checkout_client');
+    }
+  }
   if (!record) {
     return { ok: false, statusCode: 404, message: 'Order not found.' };
   }

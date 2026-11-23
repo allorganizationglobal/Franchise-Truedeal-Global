@@ -19,7 +19,9 @@ import {
   reconcileRazorpayOrder,
   initiateRazorpayRefund,
   addRazorpayAdminNote,
-  getRazorpayPersistenceAdapter
+  getRazorpayPersistenceAdapter,
+  deriveGuestApplicantUid,
+  verifySignedCheckoutToken
 } from './src/server/razorpayService';
 import { sendTransactionalFranchiseEmail } from './src/server/emailService';
 
@@ -218,26 +220,63 @@ async function createServer() {
   // RAZORPAY STANDARD WEB CHECKOUT ROUTES (Primary Gateway)
   // =========================================================================
 
-  // 1. Create Razorpay Order (Authenticated, Server-Calculated Price & GST)
+  // 1. Create Razorpay Order (Supports Google Sign-In OR Direct Applicant Checkout, Server-Calculated Price & GST)
   app.post('/api/create-order', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid || !caller.email) {
-      return res.status(401).json({
-        ok: false,
-        error: 'unauthorized',
-        message: caller.error || 'Please sign in with Google before initiating payment.'
-      });
+    const body = req.body || {};
+    const authHeader = String(req.headers.authorization || '').trim();
+
+    let userId = '';
+    let email = '';
+    let applicantName = String(body.applicantName || '').trim();
+    const phone = String(body.phone || '').trim();
+
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const caller = await verifyFirebaseBearerToken(authHeader);
+      if (!caller.valid || !caller.uid || !caller.email) {
+        return res.status(401).json({
+          ok: false,
+          error: 'unauthorized',
+          message: caller.error || 'Invalid authentication token. Please retry or continue with your applicant details.'
+        });
+      }
+      userId = caller.uid;
+      email = caller.email.toLowerCase();
+      applicantName = applicantName || caller.name || 'Franchise Applicant';
+    } else {
+      email = String(body.email || '').trim().toLowerCase();
+      const phoneDigits = phone.replace(/\D/g, '');
+      if (applicantName.length < 2 || applicantName.length > 120) {
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_customer_name',
+          message: 'Please enter your full name (2–120 characters) before launching Razorpay Checkout.'
+        });
+      }
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_customer_email',
+          message: 'Please enter a valid email address for your Razorpay payment receipt.'
+        });
+      }
+      if (phoneDigits.length < 7 || phoneDigits.length > 15) {
+        return res.status(400).json({
+          ok: false,
+          error: 'invalid_customer_phone',
+          message: 'Please enter a valid mobile number (7–15 digits) before launching Razorpay Checkout.'
+        });
+      }
+      userId = deriveGuestApplicantUid(email);
     }
 
-    const body = req.body || {};
     const result = await createRazorpayOrder({
       applicationId: String(body.applicationId || ''),
       planId: String(body.planId || ''),
       paymentPurpose: body.paymentPurpose === 'application_fee' ? 'application_fee' : 'franchise_deposit',
-      userId: caller.uid,
-      applicantName: String(body.applicantName || caller.name || 'Franchise Applicant'),
-      email: caller.email,
-      phone: String(body.phone || ''),
+      userId,
+      applicantName,
+      email,
+      phone,
       termsAccepted: body.termsAccepted !== false,
       forceNewOrder: Boolean(body.forceNewOrder),
       clientIp: getClientIp(req)
@@ -248,25 +287,51 @@ async function createServer() {
 
   // 2. Verify Razorpay Payment Signature + Fetch Capture Status
   app.post('/api/verify-payment', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid) {
+    const body = req.body || {};
+    const orderId = String(body.razorpay_order_id || '').trim();
+    const checkoutToken =
+      typeof body.checkoutToken === 'string' && body.checkoutToken.trim()
+        ? body.checkoutToken.trim()
+        : String(req.headers['x-checkout-token'] || '').trim();
+
+    let callerUid = '';
+    let callerIsAdmin = false;
+
+    const authHeader = String(req.headers.authorization || '').trim();
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const caller = await verifyFirebaseBearerToken(authHeader);
+      if (caller.valid && caller.uid) {
+        callerUid = caller.uid;
+        callerIsAdmin = Boolean(caller.isAdmin);
+      }
+    }
+
+    if (!callerUid && checkoutToken) {
+      const tokenCheck = verifySignedCheckoutToken(checkoutToken);
+      if (tokenCheck.valid && tokenCheck.claims && tokenCheck.claims.orderId === orderId) {
+        callerUid = tokenCheck.claims.userId;
+        callerIsAdmin = false;
+      }
+    }
+
+    if (!callerUid) {
       return res.status(401).json({
         ok: false,
         verified: false,
         captured: false,
         error: 'unauthorized',
-        message: caller.error || 'Authentication required to verify payment.'
+        message: 'Valid authentication or server-signed checkout token is required to verify payment.'
       });
     }
 
-    const body = req.body || {};
     const result = await verifyRazorpayPayment({
-      razorpay_order_id: String(body.razorpay_order_id || ''),
+      razorpay_order_id: orderId,
       razorpay_payment_id: String(body.razorpay_payment_id || ''),
       razorpay_signature: String(body.razorpay_signature || ''),
       applicationId: body.applicationId ? String(body.applicationId) : undefined,
-      callerUid: caller.uid,
-      callerIsAdmin: Boolean(caller.isAdmin),
+      checkoutToken: checkoutToken || undefined,
+      callerUid,
+      callerIsAdmin,
       clientIp: getClientIp(req)
     });
 
@@ -305,13 +370,34 @@ async function createServer() {
       return res.status(200).json({ ok: true, config: getRazorpayConfigStatus() });
     }
 
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid) {
-      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
-    }
-
     const orderId = String(req.query.orderId || '').trim();
     const applicationId = String(req.query.applicationId || '').trim();
+    const checkoutToken = String(req.headers['x-checkout-token'] || req.query.checkoutToken || '').trim();
+
+    let callerUid = '';
+    let callerIsAdmin = false;
+
+    const authHeader = String(req.headers.authorization || '').trim();
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const caller = await verifyFirebaseBearerToken(authHeader);
+      if (caller.valid && caller.uid) {
+        callerUid = caller.uid;
+        callerIsAdmin = Boolean(caller.isAdmin);
+      }
+    }
+
+    if (!callerUid && checkoutToken && orderId) {
+      const tokenCheck = verifySignedCheckoutToken(checkoutToken);
+      if (tokenCheck.valid && tokenCheck.claims && tokenCheck.claims.orderId === orderId) {
+        callerUid = tokenCheck.claims.userId;
+        callerIsAdmin = false;
+      }
+    }
+
+    if (!callerUid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: 'Authentication required.' });
+    }
+
     const store = getRazorpayPersistenceAdapter();
 
     if (orderId) {
@@ -319,7 +405,7 @@ async function createServer() {
       if (!payment) {
         return res.status(404).json({ ok: false, error: 'not_found', message: 'Razorpay order not found.' });
       }
-      if (!caller.isAdmin && payment.userId !== caller.uid) {
+      if (!callerIsAdmin && payment.userId !== callerUid) {
         return res.status(403).json({ ok: false, error: 'forbidden', message: 'Unauthorized access to payment record.' });
       }
       return res.status(200).json({ ok: true, payment });
@@ -327,7 +413,7 @@ async function createServer() {
 
     if (applicationId) {
       const payments = await store.getPaymentsByApplicationId(applicationId);
-      const visible = caller.isAdmin ? payments : payments.filter((p) => p.userId === caller.uid);
+      const visible = callerIsAdmin ? payments : payments.filter((p) => p.userId === callerUid);
       return res.status(200).json({ ok: true, payments: visible });
     }
 
@@ -335,20 +421,46 @@ async function createServer() {
   });
 
   app.post('/api/payments/razorpay/status', async (req: Request, res: Response) => {
-    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
-    if (!caller.valid || !caller.uid) {
-      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
-    }
     const body = req.body || {};
     const targetOrderId = String(body.razorpayOrderId || '').trim();
+    const checkoutToken =
+      typeof body.checkoutToken === 'string' && body.checkoutToken.trim()
+        ? body.checkoutToken.trim()
+        : String(req.headers['x-checkout-token'] || '').trim();
+
+    let callerUid = '';
+    let callerIsAdmin = false;
+
+    const authHeader = String(req.headers.authorization || '').trim();
+    if (authHeader.toLowerCase().startsWith('bearer ')) {
+      const caller = await verifyFirebaseBearerToken(authHeader);
+      if (caller.valid && caller.uid) {
+        callerUid = caller.uid;
+        callerIsAdmin = Boolean(caller.isAdmin);
+      }
+    }
+
+    if (!callerUid && checkoutToken && targetOrderId) {
+      const tokenCheck = verifySignedCheckoutToken(checkoutToken);
+      if (tokenCheck.valid && tokenCheck.claims && tokenCheck.claims.orderId === targetOrderId) {
+        callerUid = tokenCheck.claims.userId;
+        callerIsAdmin = false;
+      }
+    }
+
+    if (!callerUid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: 'Authentication required.' });
+    }
+
     const outcome = body.outcome === 'failed' ? 'failed' : body.outcome === 'cancelled' ? 'cancelled' : null;
     if (!targetOrderId || !outcome) {
       return res.status(400).json({ ok: false, error: 'invalid_payload' });
     }
     const result = await recordClientCheckoutAttemptEvent({
       razorpayOrderId: targetOrderId,
-      callerUid: caller.uid,
-      callerIsAdmin: Boolean(caller.isAdmin),
+      callerUid,
+      callerIsAdmin,
+      checkoutToken: checkoutToken || undefined,
       outcome,
       reason: body.reason ? String(body.reason).slice(0, 300) : undefined,
       razorpayPaymentId: body.razorpayPaymentId ? String(body.razorpayPaymentId).slice(0, 128) : undefined

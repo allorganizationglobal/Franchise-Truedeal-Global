@@ -136,6 +136,7 @@ export default function App() {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [isNotifDrawerOpen, setIsNotifDrawerOpen] = useState(false);
   const [quickPayApp, setQuickPayApp] = useState<FranchiseApplication | null>(null);
+  const [authErrorBanner, setAuthErrorBanner] = useState<string | null>(null);
 
   // Live collections
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -253,7 +254,8 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleSignInGoogle = async () => {
+  const handleSignInGoogle = async (): Promise<{ ok: boolean; error?: string }> => {
+    setAuthErrorBanner(null);
     try {
       const user = await signInWithGoogle();
       if (user) {
@@ -263,17 +265,22 @@ export default function App() {
           'success'
         );
         refreshAllData();
+        return { ok: true };
       }
+      return { ok: false };
     } catch (err: any) {
       const code = err?.code || '';
-      const msg = err?.message || '';
+      const msg = err?.message || 'Google Sign-In could not be completed. Please try again.';
       if (!code.includes('popup-closed') && !msg.includes('popup-closed')) {
+        setAuthErrorBanner(msg);
         NotificationService.addNotification(
           'Sign-In Notice',
-          msg || 'Authentication could not be completed. Please try again.',
+          msg,
           'warning'
         );
+        return { ok: false, error: msg };
       }
+      return { ok: false };
     }
   };
 
@@ -345,9 +352,9 @@ export default function App() {
       createdAt: nowIso,
       updatedAt: nowIso,
       applicant: {
-        fullName: currentUser?.displayName || 'Franchise Applicant',
-        email: currentUser?.email || 'applicant@truedealglobal.com',
-        phone: '+91-9317194033',
+        fullName: currentUser?.displayName || '',
+        email: currentUser?.email || '',
+        phone: '',
         companyName: '',
         country: 'India',
         stateProvince: 'Uttar Pradesh',
@@ -432,6 +439,22 @@ export default function App() {
         onSignInGoogle={handleSignInGoogle}
         onSignOut={handleSignOut}
       />
+
+      {/* Visible Google Sign-In Notice Banner (e.g., unauthorized custom domain or blocked popup) */}
+      {authErrorBanner && (
+        <div className="bg-amber-50 dark:bg-amber-950/60 border-b border-amber-200 dark:border-amber-800 px-4 py-2.5 text-xs text-amber-950 dark:text-amber-200">
+          <div className="max-w-7xl mx-auto flex items-start justify-between gap-3">
+            <span className="leading-relaxed font-medium">{authErrorBanner}</span>
+            <button
+              type="button"
+              onClick={() => setAuthErrorBanner(null)}
+              className="shrink-0 font-bold underline hover:text-amber-700 dark:hover:text-white cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Viewport Content */}
       <main className="flex-1 w-full max-w-full overflow-x-hidden">
