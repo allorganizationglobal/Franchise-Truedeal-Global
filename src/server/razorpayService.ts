@@ -2,6 +2,13 @@ import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { calculateServerPlanAmount, getAuthoritativePlan } from './plansCatalog.js';
 import { sendTransactionalFranchiseEmail } from './emailService.js';
+import {
+  normalizeReferralCode,
+  recordPendingReferralForOrder,
+  finalizeVerifiedReferralAttribution,
+  voidReferralForRefundedOrder,
+  ServerReferralAttribution
+} from './referralService.js';
 
 /**
  * TRUEDEAL GLOBAL OPC PVT LTD — Authoritative Razorpay Standard Web Checkout Engine
@@ -57,6 +64,7 @@ export interface RazorpayPaymentRecord {
   phone: string;
   planId: string;
   planTitle: string;
+  referralCode?: string;
   paymentPurpose: 'application_fee' | 'franchise_deposit';
   baseAmountINR: number;
   gstRatePercent: number;
@@ -421,6 +429,7 @@ export interface SignedCheckoutTokenClaims {
   phone: string;
   planId: string;
   planTitle: string;
+  referralCode?: string;
   paymentPurpose: 'application_fee' | 'franchise_deposit';
   baseAmountINR: number;
   gstRatePercent: number;
@@ -448,6 +457,7 @@ export function createSignedCheckoutToken(record: RazorpayPaymentRecord): string
     phone: record.phone,
     planId: record.planId,
     planTitle: record.planTitle,
+    referralCode: record.referralCode,
     paymentPurpose: record.paymentPurpose,
     baseAmountINR: record.baseAmountINR,
     gstRatePercent: record.gstRatePercent,
@@ -528,6 +538,7 @@ function hydrateRecordFromSignedClaims(claims: SignedCheckoutTokenClaims, source
     phone: claims.phone,
     planId: claims.planId,
     planTitle: claims.planTitle,
+    referralCode: claims.referralCode,
     paymentPurpose: claims.paymentPurpose,
     baseAmountINR: claims.baseAmountINR,
     gstRatePercent: claims.gstRatePercent,
@@ -696,6 +707,7 @@ export interface CreateRazorpayOrderInput {
   applicantName: string;
   email: string;
   phone: string;
+  referralCode?: string;
   termsAccepted?: boolean;
   forceNewOrder?: boolean;
   clientIp?: string;
@@ -759,6 +771,7 @@ export async function createRazorpayOrder(
   const applicantName = String(input.applicantName || '').trim();
   const email = String(input.email || '').trim().toLowerCase();
   const phone = String(input.phone || '').replace(/[^\d+]/g, '').slice(0, 15);
+  const referralCode = normalizeReferralCode(input.referralCode) || undefined;
 
   if (!applicationId || applicationId === 'PENDING' || !/^[a-zA-Z0-9_-]{3,64}$/.test(applicationId)) {
     return {
@@ -915,7 +928,8 @@ export async function createRazorpayOrder(
     planTitle: plan.title,
     userId: input.userId,
     paymentPurpose,
-    company: 'TRUEDEAL GLOBAL OPC PVT LTD'
+    company: 'TRUEDEAL GLOBAL OPC PVT LTD',
+    ...(referralCode ? { referralCode } : {})
   };
 
   let createdOrder: RazorpayApiOrderResponse;
@@ -965,6 +979,7 @@ export async function createRazorpayOrder(
     phone,
     planId: plan.id,
     planTitle: plan.title,
+    referralCode,
     paymentPurpose,
     baseAmountINR: fee.baseAmountINR,
     gstRatePercent: fee.gstRatePercent,
@@ -984,7 +999,7 @@ export async function createRazorpayOrder(
         timestamp: nowIso,
         event: 'order.created',
         status: 'CREATED',
-        details: `Created Razorpay order ${createdOrder.id} for ₹${fee.totalAmountINR.toFixed(2)} INR (${fee.totalAmountPaise} paise).`,
+        details: `Created Razorpay order ${createdOrder.id} for ₹${fee.totalAmountINR.toFixed(2)} INR (${fee.totalAmountPaise} paise).${referralCode ? ` Referral Code: ${referralCode}.` : ''}`,
         source: 'create_order'
       }
     ],
@@ -995,6 +1010,21 @@ export async function createRazorpayOrder(
   };
 
   await activeStore.savePayment(record);
+
+  if (referralCode) {
+    recordPendingReferralForOrder({
+      referralCode,
+      applicationId,
+      applicantName,
+      applicantEmail: email,
+      applicantPhone: phone,
+      planId: plan.id,
+      planTitle: plan.title,
+      baseAmountINR: fee.baseAmountINR,
+      orderAmountINR: fee.totalAmountINR,
+      razorpayOrderId: createdOrder.id
+    });
+  }
 
   return {
     ok: true,
@@ -1059,6 +1089,7 @@ export interface VerifyRazorpayPaymentResult {
   message: string;
   paymentRecord?: RazorpayPaymentRecord;
   emailDispatched?: boolean;
+  referralAttribution?: ServerReferralAttribution | null;
 }
 
 export async function verifyRazorpayPayment(
@@ -1319,6 +1350,23 @@ export async function verifyRazorpayPayment(
 
     await activeStore.savePayment(record);
 
+    let referralAttribution: ServerReferralAttribution | null = null;
+    if (record.referralCode) {
+      referralAttribution = await finalizeVerifiedReferralAttribution({
+        referralCode: record.referralCode,
+        applicationId: record.applicationId,
+        applicantName: record.applicantName,
+        applicantEmail: record.email,
+        applicantPhone: record.phone,
+        planId: record.planId,
+        planTitle: record.planTitle,
+        baseAmountINR: record.baseAmountINR,
+        orderAmountINR: record.finalAmountINR,
+        razorpayOrderId: record.razorpayOrderId,
+        razorpayPaymentId: paymentId
+      });
+    }
+
     return {
       ok: true,
       verified: true,
@@ -1327,7 +1375,8 @@ export async function verifyRazorpayPayment(
       paymentStatus: 'CAPTURED',
       message: 'Payment verified and captured successfully. Franchise application remains queued for administrative approval.',
       paymentRecord: record,
-      emailDispatched
+      emailDispatched,
+      referralAttribution
     };
   }
 
@@ -1608,6 +1657,24 @@ export async function processRazorpayWebhook(params: {
             });
             record.confirmationEmailSent = emailRes.sent;
           }
+
+          const webhookRefCode = record.referralCode || normalizeReferralCode(paymentEntity?.notes?.referralCode);
+          if (webhookRefCode) {
+            record.referralCode = webhookRefCode;
+            await finalizeVerifiedReferralAttribution({
+              referralCode: webhookRefCode,
+              applicationId: record.applicationId,
+              applicantName: record.applicantName,
+              applicantEmail: record.email,
+              applicantPhone: record.phone,
+              planId: record.planId,
+              planTitle: record.planTitle,
+              baseAmountINR: record.baseAmountINR,
+              orderAmountINR: record.finalAmountINR,
+              razorpayOrderId: record.razorpayOrderId,
+              razorpayPaymentId: record.razorpayPaymentId || rzpPaymentId || record.razorpayOrderId
+            });
+          }
         } else {
           summary = `Payment ${record.razorpayOrderId} already in refund lifecycle (${record.paymentStatus}).`;
         }
@@ -1628,6 +1695,23 @@ export async function processRazorpayWebhook(params: {
           record.verifiedAt = record.verifiedAt || nowIso;
           record.paymentTimestamp = record.paymentTimestamp || nowIso;
           summary = `Webhook confirmed order.paid for ${record.razorpayOrderId}.`;
+          const orderRefCode = record.referralCode || normalizeReferralCode(orderEntity?.notes?.referralCode);
+          if (orderRefCode) {
+            record.referralCode = orderRefCode;
+            await finalizeVerifiedReferralAttribution({
+              referralCode: orderRefCode,
+              applicationId: record.applicationId,
+              applicantName: record.applicantName,
+              applicantEmail: record.email,
+              applicantPhone: record.phone,
+              planId: record.planId,
+              planTitle: record.planTitle,
+              baseAmountINR: record.baseAmountINR,
+              orderAmountINR: record.finalAmountINR,
+              razorpayOrderId: record.razorpayOrderId,
+              razorpayPaymentId: record.razorpayPaymentId || rzpPaymentId || record.razorpayOrderId
+            });
+          }
         }
         break;
       }
@@ -1657,6 +1741,7 @@ export async function processRazorpayWebhook(params: {
           record.refundId = rzpRefundId || record.refundId;
           record.refundAmountPaise = Number(refundEntity?.amount || record.amountPaise);
           summary = `Refund ${record.refundId} initiated via Razorpay.`;
+          voidReferralForRefundedOrder(record.razorpayOrderId, `Excluded: Razorpay refund ${record.refundId || ''} initiated.`);
         } else {
           summary = `Logged refund.created for order in state ${record.paymentStatus}.`;
         }
@@ -1672,6 +1757,7 @@ export async function processRazorpayWebhook(params: {
           record.refundAmountPaise = Number(refundEntity?.amount || record.amountPaise);
           record.refundedAt = nowIso;
           summary = `Refund ${record.refundId} processed by Razorpay.`;
+          voidReferralForRefundedOrder(record.razorpayOrderId, `Excluded: Razorpay refund ${record.refundId || ''} processed.`);
         } else {
           summary = `Logged refund.processed for order in state ${record.paymentStatus}.`;
         }
@@ -1899,6 +1985,7 @@ export async function initiateRazorpayRefund(params: {
     });
     record.updatedAt = nowIso;
     await activeStore.savePayment(record);
+    voidReferralForRefundedOrder(record.razorpayOrderId, `Excluded: Admin initiated Razorpay refund ${refund.id}.`);
 
     return {
       ok: true,

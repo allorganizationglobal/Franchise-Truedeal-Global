@@ -12,11 +12,19 @@ import {
   UserRole,
   Currency,
   CompanyComplianceConfig,
-  ContactInquiry
+  ContactInquiry,
+  ReferralPartner,
+  ReferralAttributionRecord,
+  ReferralPayoutStatus
 } from '../types/franchise';
 import { DEFAULT_COMPLIANCE_CONFIG } from '../config/complianceConfig';
 import { calculateSha256, generateAuditChecksum } from '../utils/crypto';
-import { syncApplicationToFirestore, syncAuditLogToFirestore } from './firebase';
+import {
+  syncApplicationToFirestore,
+  syncAuditLogToFirestore,
+  syncReferralPartnerToFirestore,
+  syncReferralRecordToFirestore
+} from './firebase';
 
 // Live Foreign Exchange & Surcharge Configuration
 export const USD_INR_RATE = 87.5; // Base market exchange rate (1 USD = 87.5 INR)
@@ -876,7 +884,9 @@ const STORAGE_KEYS = {
   ACTIVE_ROLE: 'truedeal_active_role',
   COMPLIANCE_CONFIG: 'truedeal_compliance_config_v1',
   PLAN_OVERRIDES: 'truedeal_plan_overrides_v1',
-  CONTACT_INQUIRIES: 'truedeal_contact_inquiries_v1'
+  CONTACT_INQUIRIES: 'truedeal_contact_inquiries_v1',
+  REFERRAL_PARTNERS: 'truedeal_referral_partners_v1',
+  REFERRAL_RECORDS: 'truedeal_referral_records_v1'
 };
 
 // Automated Evaluation Scoring Algorithm
@@ -1638,4 +1648,90 @@ export class FranchiseStorageService {
     }
     return list;
   }
+
+  // Referral Program Partners & Attribution Records (Synced with Firestore & Server API)
+  static getReferralPartners(): ReferralPartner[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.REFERRAL_PARTNERS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveReferralPartner(partner: ReferralPartner, syncRemote = true): ReferralPartner {
+    const list = this.getReferralPartners();
+    const idx = list.findIndex((p) => p.referralCode === partner.referralCode);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...partner };
+    } else {
+      list.unshift(partner);
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.REFERRAL_PARTNERS, JSON.stringify(list));
+    }
+    if (syncRemote) {
+      syncReferralPartnerToFirestore(partner).catch(() => {});
+    }
+    return partner;
+  }
+
+  static getReferralRecords(): ReferralAttributionRecord[] {
+    if (typeof window === 'undefined') return [];
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.REFERRAL_RECORDS);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  static saveReferralRecord(record: ReferralAttributionRecord, syncRemote = true): ReferralAttributionRecord {
+    const list = this.getReferralRecords();
+    const idx = list.findIndex((r) => r.referralId === record.referralId);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...record };
+    } else {
+      list.unshift(record);
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.REFERRAL_RECORDS, JSON.stringify(list));
+    }
+    if (syncRemote) {
+      syncReferralRecordToFirestore(record).catch(() => {});
+    }
+    return record;
+  }
+
+  static updateReferralPayoutStatusLocal(
+    referralId: string,
+    payoutStatus: ReferralPayoutStatus,
+    payoutUtr: string | undefined,
+    actorEmail: string
+  ): ReferralAttributionRecord | null {
+    const list = this.getReferralRecords();
+    const target = list.find((r) => r.referralId === referralId);
+    if (!target) return null;
+    const nowIso = new Date().toISOString();
+    target.payoutStatus = payoutStatus;
+    target.updatedAt = nowIso;
+    target.updatedBy = actorEmail;
+    if (payoutUtr) target.payoutUtr = payoutUtr;
+    if (payoutStatus === 'Approved') target.approvedAt = nowIso;
+    if (payoutStatus === 'Paid') target.paidAt = nowIso;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEYS.REFERRAL_RECORDS, JSON.stringify(list));
+    }
+    syncReferralRecordToFirestore(target).catch(() => {});
+    this.recordAuditLog(
+      `REFERRAL_PAYOUT_${payoutStatus.toUpperCase()}`,
+      referralId,
+      `Updated referral payout ${referralId} (${target.referralCode}, ₹${target.commissionAmountINR}) to ${payoutStatus}${payoutUtr ? ` (UTR: ${payoutUtr})` : ''}.`,
+      'super_admin',
+      actorEmail
+    );
+    return target;
+  }
 }
+

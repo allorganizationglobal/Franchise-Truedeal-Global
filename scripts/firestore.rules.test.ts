@@ -111,6 +111,16 @@ verify(
   'DD-12: String/file size bounds enforced and SUCCESS/CAPTURED payments locked against downgrade'
 );
 
+// 12. Referral Program Security Rules: PII isolation on referral_partners & admin-only writes on referrals
+verify(
+  rules.includes('match /referral_partners/{referralCode}') &&
+    rules.includes('isValidReferralPartner(incoming(), referralCode)') &&
+    rules.includes('match /referrals/{referralId}') &&
+    rules.includes('isValidReferralRecord(incoming(), referralId)') &&
+    rules.includes('data.commissionRatePercent == 10'),
+  'REF-1: Referral partners isolated by owner/admin and referral payout ledger strictly admin-write with 10% rate invariant'
+);
+
 let passed = 0;
 for (const c of checks) {
   if (c.passed) {

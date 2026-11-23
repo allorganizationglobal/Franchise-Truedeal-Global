@@ -40,6 +40,11 @@ import { uploadFranchiseDocumentToStorage } from '../../services/firebase';
 import { PaymentModal } from '../common/PaymentModal';
 import { BiometricSetupModal } from '../common/BiometricSetupModal';
 import { playApprovalSuccessSound } from '../../utils/audio';
+import {
+  getStoredReferralCode,
+  setStoredReferralCode,
+  normalizeReferralCodeClient
+} from '../../utils/referralTracking';
 import confetti from 'canvas-confetti';
 
 interface ApplicationWizardProps {
@@ -86,6 +91,8 @@ export function ApplicationWizard({
   const [stateProvince, setStateProvince] = useState('Uttar Pradesh');
   const [city, setCity] = useState('');
   const [postalCode, setPostalCode] = useState('');
+  const [referralCode, setReferralCode] = useState<string>(() => getStoredReferralCode());
+  const [referralAutoApplied] = useState<boolean>(() => Boolean(getStoredReferralCode()));
 
   // Biometric Enrollment State
   const [showBiometricSetupModal, setShowBiometricSetupModal] = useState<boolean>(false);
@@ -172,7 +179,8 @@ export function ApplicationWizard({
       creditScoreTier,
       fundingSource,
       operationalExperienceYears,
-      businessBackgroundSummary
+      businessBackgroundSummary,
+      referralCode
     };
     try {
       localStorage.setItem('truedeal_franchise_draft', JSON.stringify(draftPayload));
@@ -206,6 +214,7 @@ export function ApplicationWizard({
         setWizardApplicationId(draft.wizardApplicationId);
       }
       if (draft.selectedPlanId) setSelectedPlanId(draft.selectedPlanId);
+      if (draft.referralCode && !referralCode) setReferralCode(draft.referralCode);
       if (draft.currentStep) setCurrentStep(draft.currentStep);
       setSavedDraftExists(false);
       NotificationService.addNotification('Draft Loaded', 'Your saved registration progress has been restored.', 'info');
@@ -335,6 +344,7 @@ export function ApplicationWizard({
       currency: currentCurrency,
       amount: selectedFeeBreakdown.totalPayableINR,
       paymentStatus: hasVerifiedCapture ? 'CAPTURED' : existing?.paymentStatus || 'PAYMENT_PENDING',
+      referralCode: normalizeReferralCodeClient(referralCode) || existing?.referralCode || undefined,
       territoryRequested: territoryRequested.trim() || 'India — Primary Territory',
       preferredStartDate,
       operationalExperienceYears,
@@ -817,6 +827,31 @@ export function ApplicationWizard({
                     value={country}
                     onChange={e => setCountry(e.target.value)}
                     className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                      Partner Referral Code <span className="text-slate-400 font-normal">(Optional)</span>
+                    </label>
+                    {referralAutoApplied && referralCode && (
+                      <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                        Auto-applied from referral link
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={referralCode}
+                    onChange={e => {
+                      const next = e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+                      setReferralCode(next);
+                      if (next.length >= 4) {
+                        setStoredReferralCode(next);
+                      }
+                    }}
+                    placeholder="e.g., TD-RAHUL3210 (leave blank if not referred)"
+                    className="w-full px-3 py-2 text-sm font-mono uppercase bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>

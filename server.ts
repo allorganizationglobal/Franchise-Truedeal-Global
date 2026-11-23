@@ -24,6 +24,14 @@ import {
   verifySignedCheckoutToken
 } from './src/server/razorpayService.js';
 import { sendTransactionalFranchiseEmail } from './src/server/emailService.js';
+import {
+  registerReferralPartner,
+  lookupReferralPartnerStatus,
+  getReferralCommissionSchedule,
+  listAllReferralsForAdmin,
+  updateReferralPayoutStatus,
+  ServerReferralPayoutStatus
+} from './src/server/referralService.js';
 
 dotenv.config();
 
@@ -277,6 +285,7 @@ async function createServer() {
       applicantName,
       email,
       phone,
+      referralCode: typeof body.referralCode === 'string' ? body.referralCode : undefined,
       termsAccepted: body.termsAccepted !== false,
       forceNewOrder: Boolean(body.forceNewOrder),
       clientIp: getClientIp(req)
@@ -553,6 +562,70 @@ async function createServer() {
     }
 
     return res.status(400).json({ ok: false, error: 'unsupported_action' });
+  });
+
+  // 6. Franchise Referral Program Endpoints (Public Registration/Status + Admin Payout Management)
+  app.post('/api/referrals/register', (req: Request, res: Response) => {
+    const body = req.body || {};
+    const result = registerReferralPartner({
+      name: String(body.name || ''),
+      phone: String(body.phone || ''),
+      email: String(body.email || ''),
+      upiOrBankDetails: String(body.upiOrBankDetails || ''),
+      userId: typeof body.userId === 'string' ? body.userId : undefined,
+      clientIp: getClientIp(req)
+    });
+    return res.status(result.statusCode).json(result);
+  });
+
+  app.get('/api/referrals/status', (req: Request, res: Response) => {
+    const mode = String(req.query.mode || '').trim();
+    if (mode === 'schedule') {
+      return res.status(200).json({ ok: true, schedule: getReferralCommissionSchedule() });
+    }
+    const queryVal = String(req.query.query || '').trim();
+    const result = lookupReferralPartnerStatus(queryVal, getClientIp(req));
+    return res.status(result.statusCode).json(result);
+  });
+
+  app.get('/api/admin/referrals', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
+    }
+    if (!caller.isAdmin) {
+      return res.status(403).json({ ok: false, error: 'forbidden', message: 'Administrator role required.' });
+    }
+    const data = listAllReferralsForAdmin();
+    return res.status(200).json({ ok: true, ...data });
+  });
+
+  app.post('/api/admin/referrals', async (req: Request, res: Response) => {
+    const caller = await verifyFirebaseBearerToken(req.headers.authorization);
+    if (!caller.valid || !caller.uid) {
+      return res.status(401).json({ ok: false, error: 'unauthorized', message: caller.error || 'Authentication required.' });
+    }
+    if (!caller.isAdmin) {
+      return res.status(403).json({ ok: false, error: 'forbidden', message: 'Administrator role required.' });
+    }
+    const body = req.body || {};
+    const referralId = String(body.referralId || '').trim();
+    const rawStatus = String(body.payoutStatus || '').trim();
+    const allowed: ServerReferralPayoutStatus[] = ['Pending', 'Approved', 'Paid', 'Rejected'];
+    if (!referralId || !allowed.includes(rawStatus as ServerReferralPayoutStatus)) {
+      return res.status(400).json({
+        ok: false,
+        error: 'invalid_payload',
+        message: 'Valid referralId and payoutStatus (Pending, Approved, Paid, Rejected) are required.'
+      });
+    }
+    const result = updateReferralPayoutStatus({
+      referralId,
+      payoutStatus: rawStatus as ServerReferralPayoutStatus,
+      payoutUtr: typeof body.payoutUtr === 'string' ? body.payoutUtr : undefined,
+      actorEmail: caller.email || 'admin@truedealglobal.com'
+    });
+    return res.status(result.statusCode).json(result);
   });
 
   // 7. Admin Application Approval / Rejection Transactional Email Trigger (Admin-Only)

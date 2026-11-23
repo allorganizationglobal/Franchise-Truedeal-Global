@@ -83,6 +83,7 @@
         "txnId": { "type": "string", "maxLength": 128 },
         "razorpayOrderId": { "type": "string", "maxLength": 128 },
         "razorpayPaymentId": { "type": "string", "maxLength": 128 },
+        "referralCode": { "type": "string", "maxLength": 32, "pattern": "^[A-Z0-9_\\-]+$" },
         "createdAt": { "type": "string", "maxLength": 64 },
         "updatedAt": { "type": "string", "maxLength": 64 }
       },
@@ -225,6 +226,55 @@
         "active": { "type": "boolean" }
       },
       "required": ["uid", "email", "role", "active"]
+    },
+    "ReferralPartner": {
+      "title": "ReferralPartner",
+      "description": "Registered TRUEDEAL GLOBAL referral partner profile with unique referral code and UPI/Bank payout handle.",
+      "type": "object",
+      "properties": {
+        "referralCode": { "type": "string", "minLength": 4, "maxLength": 32, "pattern": "^[A-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 120 },
+        "phone": { "type": "string", "minLength": 10, "maxLength": 32 },
+        "email": { "type": "string", "format": "email", "minLength": 5, "maxLength": 160 },
+        "upiOrBankDetails": { "type": "string", "minLength": 4, "maxLength": 200 },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["referralCode", "name", "phone", "email", "upiOrBankDetails", "userId", "createdAt", "updatedAt"]
+    },
+    "ReferralRecord": {
+      "title": "ReferralRecord",
+      "description": "Server-verified Razorpay franchise referral attribution and 10% commission payout ledger entry.",
+      "type": "object",
+      "properties": {
+        "referralId": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "referralCode": { "type": "string", "minLength": 4, "maxLength": 32 },
+        "referrerName": { "type": "string", "maxLength": 120 },
+        "referrerEmail": { "type": "string", "maxLength": 160 },
+        "referrerPhone": { "type": "string", "maxLength": 32 },
+        "referrerUpiOrBank": { "type": "string", "maxLength": 200 },
+        "applicationId": { "type": "string", "minLength": 3, "maxLength": 64 },
+        "applicantName": { "type": "string", "maxLength": 120 },
+        "applicantEmail": { "type": "string", "maxLength": 160 },
+        "applicantPhone": { "type": "string", "maxLength": 32 },
+        "planId": { "type": "string", "maxLength": 64 },
+        "planTitle": { "type": "string", "maxLength": 120 },
+        "orderAmountINR": { "type": "number" },
+        "baseAmountINR": { "type": "number" },
+        "commissionRatePercent": { "type": "number" },
+        "commissionAmountINR": { "type": "number" },
+        "razorpayOrderId": { "type": "string", "maxLength": 128 },
+        "razorpayPaymentId": { "type": "string", "maxLength": 128 },
+        "paymentStatus": { "type": "string", "enum": ["PENDING", "CAPTURED", "REFUNDED", "FAILED"] },
+        "payoutStatus": { "type": "string", "enum": ["Pending", "Approved", "Paid", "Rejected"] },
+        "payoutUtr": { "type": "string", "maxLength": 64 },
+        "paidAt": { "type": "string", "maxLength": 64 },
+        "selfReferralBlocked": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["referralId", "referralCode", "applicationId", "planId", "orderAmountINR", "commissionRatePercent", "commissionAmountINR", "razorpayOrderId", "paymentStatus", "payoutStatus", "selfReferralBlocked", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -267,6 +317,14 @@
     "/admins/{adminUid}": {
       "schema": "AdminRoleRecord",
       "description": "Trusted administrator directory managed strictly by Super Admins"
+    },
+    "/referral_partners/{referralCode}": {
+      "schema": "ReferralPartner",
+      "description": "Registered franchise referral partners isolated by owner UID/email and admin access"
+    },
+    "/referrals/{referralId}": {
+      "schema": "ReferralRecord",
+      "description": "Verified Razorpay franchise referral attributions and 10% payout ledger writable strictly by admins"
     }
   }
 }

@@ -301,6 +301,7 @@ export interface FranchiseApplication {
   payuTransactionId?: string;
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
+  referralCode?: string;
   territoryRequested: string;
   preferredStartDate: string;
   operationalExperienceYears: number;
@@ -391,3 +392,48 @@ export interface AppNotification {
   type: 'info' | 'success' | 'warning' | 'error';
   applicationId?: string;
 }
+
+export type ReferralPayoutStatus = 'Pending' | 'Approved' | 'Paid' | 'Rejected';
+
+export interface ReferralPartner {
+  referralCode: string;
+  name: string;
+  phone: string;
+  email: string;
+  upiOrBankDetails: string;
+  userId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReferralAttributionRecord {
+  referralId: string;
+  referralCode: string;
+  referrerName: string;
+  referrerEmail: string;
+  referrerPhone: string;
+  referrerUpiOrBank: string;
+  applicationId: string;
+  applicantName: string;
+  applicantEmail: string;
+  applicantPhone: string;
+  planId: string;
+  planTitle: string;
+  orderAmountINR: number;
+  baseAmountINR: number;
+  commissionRatePercent: number;
+  commissionAmountINR: number;
+  razorpayOrderId: string;
+  razorpayPaymentId?: string;
+  paymentStatus: 'PENDING' | 'CAPTURED' | 'REFUNDED' | 'FAILED';
+  payoutStatus: ReferralPayoutStatus;
+  payoutUtr?: string;
+  paidAt?: string;
+  approvedAt?: string;
+  updatedBy?: string;
+  selfReferralBlocked: boolean;
+  blockReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+

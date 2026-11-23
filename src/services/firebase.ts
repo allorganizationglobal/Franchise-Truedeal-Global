@@ -21,7 +21,11 @@ import {
 } from 'firebase/auth';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { FranchiseApplication } from '../types/franchise';
+import {
+  FranchiseApplication,
+  ReferralPartner,
+  ReferralAttributionRecord
+} from '../types/franchise';
 
 // Initialize Firebase App
 export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -218,6 +222,8 @@ export const firestoreInfo = {
     { name: 'payment_webhook_events', desc: 'Idempotent Razorpay Webhook Event Logs' },
     { name: 'admin_audit_logs', desc: 'Immutable Security & Payment Audit Logs' },
     { name: 'applications', desc: 'Legacy Franchise Applications Collection' },
+    { name: 'referral_partners', desc: 'Registered Referral Partners & Payout Handles' },
+    { name: 'referrals', desc: 'Verified Franchise Referral Attributions & Payout Ledger' },
     { name: 'audit_logs', desc: 'Legacy Security Audit Logs' },
     { name: 'users', desc: 'Authorized User Profiles' }
   ]
@@ -399,6 +405,7 @@ export async function syncApplicationToFirestore(application: FranchiseApplicati
     status: application.status,
     paymentStatus: application.paymentStatus || 'PAYMENT_PENDING',
     amount: typeof application.amount === 'number' ? application.amount : 0,
+    ...(application.referralCode ? { referralCode: application.referralCode } : {}),
     territoryRequested: application.territoryRequested,
     createdAt: application.createdAt || nowIso,
     updatedAt: nowIso
@@ -494,5 +501,104 @@ export async function fetchApplicationsFromFirestore(): Promise<FranchiseApplica
   }
 }
 
+// =========================================================================
+// Referral Program Firestore Persistence Helpers
+// =========================================================================
+export async function syncReferralPartnerToFirestore(partner: ReferralPartner): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  try {
+    await setDoc(
+      doc(db, 'referral_partners', partner.referralCode),
+      {
+        referralCode: partner.referralCode,
+        name: partner.name,
+        phone: partner.phone,
+        email: partner.email.toLowerCase(),
+        upiOrBankDetails: partner.upiOrBankDetails,
+        userId: partner.userId || user.uid,
+        createdAt: partner.createdAt,
+        updatedAt: partner.updatedAt
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `referral_partners/${partner.referralCode}`);
+    return false;
+  }
+}
+
+export async function syncReferralRecordToFirestore(record: ReferralAttributionRecord): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  try {
+    await setDoc(
+      doc(db, 'referrals', record.referralId),
+      {
+        referralId: record.referralId,
+        referralCode: record.referralCode,
+        referrerName: record.referrerName,
+        referrerEmail: record.referrerEmail,
+        referrerPhone: record.referrerPhone,
+        referrerUpiOrBank: record.referrerUpiOrBank,
+        applicationId: record.applicationId,
+        applicantName: record.applicantName,
+        applicantEmail: record.applicantEmail,
+        applicantPhone: record.applicantPhone,
+        planId: record.planId,
+        planTitle: record.planTitle,
+        orderAmountINR: record.orderAmountINR,
+        baseAmountINR: record.baseAmountINR,
+        commissionRatePercent: record.commissionRatePercent,
+        commissionAmountINR: record.commissionAmountINR,
+        razorpayOrderId: record.razorpayOrderId,
+        razorpayPaymentId: record.razorpayPaymentId || '',
+        paymentStatus: record.paymentStatus,
+        payoutStatus: record.payoutStatus,
+        payoutUtr: record.payoutUtr || '',
+        paidAt: record.paidAt || '',
+        selfReferralBlocked: Boolean(record.selfReferralBlocked),
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `referrals/${record.referralId}`);
+    return false;
+  }
+}
+
+export async function fetchAllReferralsFromFirestore(): Promise<ReferralAttributionRecord[]> {
+  try {
+    const snapshot = await getDocs(collection(db, 'referrals'));
+    const items: ReferralAttributionRecord[] = [];
+    snapshot.forEach((d) => {
+      items.push(d.data() as ReferralAttributionRecord);
+    });
+    return items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'referrals');
+    return [];
+  }
+}
+
+export async function fetchAllReferralPartnersFromFirestore(): Promise<ReferralPartner[]> {
+  try {
+    const snapshot = await getDocs(collection(db, 'referral_partners'));
+    const items: ReferralPartner[] = [];
+    snapshot.forEach((d) => {
+      items.push(d.data() as ReferralPartner);
+    });
+    return items.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'referral_partners');
+    return [];
+  }
+}
+
 // Trigger connection test non-blockingly
 testConnection().catch(() => {});
+

@@ -29,6 +29,11 @@ import {
   RazorpayCheckoutFailedEvent,
   RazorpayCheckoutSuccessResponse
 } from '../../utils/razorpayCheckout';
+import {
+  getStoredReferralCode,
+  setStoredReferralCode,
+  normalizeReferralCodeClient
+} from '../../utils/referralTracking';
 import { OfficialReceiptCard } from './OfficialReceiptCard';
 
 interface PaymentModalProps {
@@ -114,6 +119,12 @@ export function PaymentModal({
   const [payerPhone, setPayerPhone] = useState(() =>
     cleanInitialField(application.applicant.phone, ['+91-9317194033'])
   );
+  const [referralCode, setReferralCode] = useState(() =>
+    normalizeReferralCodeClient(application.referralCode) || getStoredReferralCode()
+  );
+  const [referralAutoApplied, setReferralAutoApplied] = useState(() =>
+    Boolean(normalizeReferralCodeClient(application.referralCode) || getStoredReferralCode())
+  );
   const [signInBusy, setSignInBusy] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
 
@@ -141,6 +152,11 @@ export function PaymentModal({
     setPayerPhone((prev) =>
       prev || cleanInitialField(application.applicant.phone, ['+91-9317194033'])
     );
+    const resolvedRef = normalizeReferralCodeClient(application.referralCode) || getStoredReferralCode();
+    if (resolvedRef) {
+      setReferralCode((prev) => prev || resolvedRef);
+      setReferralAutoApplied(true);
+    }
   }, [isOpen, currentUser, effectiveApplicationId]);
 
   useEffect(() => {
@@ -330,12 +346,18 @@ export function PaymentModal({
       return;
     }
 
+    const cleanReferralCode = normalizeReferralCodeClient(referralCode);
+    if (cleanReferralCode) {
+      setStoredReferralCode(cleanReferralCode);
+    }
+
     // Persist confirmed applicant contact details locally under a valid Application Reference ID and unlock tracker view
     try {
       FranchiseStorageService.saveApplication({
         ...application,
         id: effectiveApplicationId,
         userId: currentUser?.uid || application.userId,
+        referralCode: cleanReferralCode || application.referralCode || undefined,
         applicant: {
           ...application.applicant,
           fullName: cleanName,
@@ -379,6 +401,7 @@ export function PaymentModal({
           applicantName: cleanName,
           email: cleanEmail,
           phone: cleanPhone,
+          referralCode: cleanReferralCode || undefined,
           termsAccepted: true,
           forceNewOrder: forceNewOrder || hasFailedOrCancelledAttempt
         })
@@ -550,6 +573,14 @@ export function PaymentModal({
                 paymentMethodDetails: serverRec?.paymentMethodDetails,
                 timestamp: serverRec?.paymentTimestamp || new Date().toISOString()
               });
+
+              if (verifyData?.referralAttribution?.referralId) {
+                try {
+                  FranchiseStorageService.saveReferralRecord(verifyData.referralAttribution, true);
+                } catch {
+                  // Non-blocking local & Firestore referral sync
+                }
+              }
 
               NotificationService.addNotification(
                 `Payment Successful (₹${capturedRecord.amount.toLocaleString('en-IN')} INR)`,
@@ -1018,6 +1049,31 @@ export function PaymentModal({
                         onChange={(e) => setPayerPhone(e.target.value)}
                         placeholder="+91 98XXXXXXXX"
                         className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                          Referral Code <span className="text-slate-400 font-normal">(Optional)</span>
+                        </label>
+                        {referralAutoApplied && referralCode && (
+                          <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                            Applied from referral link
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        value={referralCode}
+                        onChange={(e) => {
+                          const next = e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32);
+                          setReferralCode(next);
+                          if (next.length >= 4) {
+                            setStoredReferralCode(next);
+                          }
+                        }}
+                        placeholder="e.g., TD-RAHUL3210 (optional)"
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-mono uppercase focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
                       />
                     </div>
                   </div>

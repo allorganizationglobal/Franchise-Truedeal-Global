@@ -33,7 +33,8 @@ import {
   Package,
   Scale,
   Inbox,
-  Save
+  Save,
+  Gift
 } from 'lucide-react';
 import {
   FranchiseApplication,
@@ -55,6 +56,7 @@ import {
   AdminRazorpayPayment,
   AdminRazorpayWebhookEvent
 } from './RazorpayPaymentsConsole';
+import { AdminReferralPayouts } from './AdminReferralPayouts';
 import { playApprovalSuccessSound } from '../../utils/audio';
 import confetti from 'canvas-confetti';
 
@@ -74,6 +76,7 @@ type AdminSection =
   | 'pipeline'
   | 'documents'
   | 'payments'
+  | 'referrals'
   | 'packages'
   | 'compliance'
   | 'inquiries'
@@ -673,6 +676,19 @@ export function AdminDashboard({
           >
             <CreditCard className="w-3.5 h-3.5" />
             <span>Payments ({allPayments.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSection('referrals')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
+              activeSection === 'referrals'
+                ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+          >
+            <Gift className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+            <span>Referral Payouts</span>
           </button>
 
           <button
@@ -1535,6 +1551,11 @@ export function AdminDashboard({
             </div>
           </div>
         </div>
+      )}
+
+      {/* SECTION 8B: REFERRAL PAYOUTS TRACKER */}
+      {activeSection === 'referrals' && (
+        <AdminReferralPayouts currentUser={currentUser} onRefresh={refreshData} />
       )}
 
       {/* SECTION 9: FRANCHISE PACKAGES & PRICING MANAGEMENT */}

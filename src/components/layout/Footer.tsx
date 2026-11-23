@@ -284,6 +284,15 @@ export function Footer({
               <li>
                 <button
                   type="button"
+                  onClick={() => onSelectTab('referral')}
+                  className="font-semibold text-emerald-700 dark:text-emerald-400 hover:underline transition-colors cursor-pointer"
+                >
+                  Refer &amp; Earn (10% Commission)
+                </button>
+              </li>
+              <li>
+                <button
+                  type="button"
                   onClick={() => onSelectTab('apply')}
                   className="hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors cursor-pointer"
                 >
@@ -353,6 +362,9 @@ export function Footer({
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4">
+            <button type="button" onClick={() => onSelectTab('referral')} className="hover:text-slate-900 dark:hover:text-slate-200 font-semibold cursor-pointer">
+              Refer &amp; Earn
+            </button>
             <button type="button" onClick={() => onSelectTab('terms')} className="hover:text-slate-900 dark:hover:text-slate-200 cursor-pointer">
               Terms
             </button>

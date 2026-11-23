@@ -79,7 +79,7 @@ service cloud.firestore {
           'applicationId', 'userId', 'applicantName', 'email', 'phone',
           'franchisePlanId', 'franchisePlanName', 'amount', 'currency',
           'applicationStatus', 'paymentStatus', 'paymentId', 'txnId',
-          'razorpayOrderId', 'razorpayPaymentId',
+          'razorpayOrderId', 'razorpayPaymentId', 'referralCode',
           'territoryRequested', 'createdAt', 'updatedAt'
         ]) &&
         data.applicationId is string && data.applicationId == appId && isValidId(data.applicationId) &&
@@ -106,6 +106,7 @@ service cloud.firestore {
         (!('txnId' in data) || (data.txnId is string && data.txnId.size() <= 128)) &&
         (!('razorpayOrderId' in data) || (data.razorpayOrderId is string && data.razorpayOrderId.size() <= 128)) &&
         (!('razorpayPaymentId' in data) || (data.razorpayPaymentId is string && data.razorpayPaymentId.size() <= 128)) &&
+        (!('referralCode' in data) || (data.referralCode is string && data.referralCode.size() <= 32)) &&
         (!('territoryRequested' in data) || (data.territoryRequested is string && data.territoryRequested.size() <= 160)) &&
         data.createdAt is string && data.createdAt.size() <= 64 &&
         data.updatedAt is string && data.updatedAt.size() <= 64;
@@ -247,6 +248,60 @@ service cloud.firestore {
         data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
         data.role in ['super_admin', 'franchise_manager', 'reviewer', 'support_staff', 'director'] &&
         data.active is bool;
+    }
+
+    function isValidReferralPartner(data, refCode) {
+      return data.keys().hasAll(['referralCode', 'name', 'phone', 'email', 'upiOrBankDetails', 'userId', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['referralCode', 'name', 'phone', 'email', 'upiOrBankDetails', 'userId', 'createdAt', 'updatedAt']) &&
+        data.referralCode is string && data.referralCode == refCode && isValidId(data.referralCode) && data.referralCode.size() >= 4 && data.referralCode.size() <= 32 &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.phone is string && data.phone.size() >= 10 && data.phone.size() <= 32 &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.upiOrBankDetails is string && data.upiOrBankDetails.size() >= 4 && data.upiOrBankDetails.size() <= 200 &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
+    }
+
+    function isValidReferralRecord(data, referralId) {
+      return data.keys().hasAll([
+          'referralId', 'referralCode', 'applicationId', 'planId',
+          'orderAmountINR', 'commissionRatePercent', 'commissionAmountINR',
+          'razorpayOrderId', 'paymentStatus', 'payoutStatus', 'selfReferralBlocked',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'referralId', 'referralCode', 'referrerName', 'referrerEmail', 'referrerPhone',
+          'referrerUpiOrBank', 'applicationId', 'applicantName', 'applicantEmail', 'applicantPhone',
+          'planId', 'planTitle', 'orderAmountINR', 'baseAmountINR', 'commissionRatePercent',
+          'commissionAmountINR', 'razorpayOrderId', 'razorpayPaymentId', 'paymentStatus',
+          'payoutStatus', 'payoutUtr', 'paidAt', 'selfReferralBlocked', 'createdAt', 'updatedAt'
+        ]) &&
+        data.referralId is string && data.referralId == referralId && isValidId(data.referralId) &&
+        data.referralCode is string && data.referralCode.size() >= 4 && data.referralCode.size() <= 32 &&
+        (!('referrerName' in data) || (data.referrerName is string && data.referrerName.size() <= 120)) &&
+        (!('referrerEmail' in data) || (data.referrerEmail is string && data.referrerEmail.size() <= 160)) &&
+        (!('referrerPhone' in data) || (data.referrerPhone is string && data.referrerPhone.size() <= 32)) &&
+        (!('referrerUpiOrBank' in data) || (data.referrerUpiOrBank is string && data.referrerUpiOrBank.size() <= 200)) &&
+        data.applicationId is string && data.applicationId.size() >= 3 && data.applicationId.size() <= 64 &&
+        (!('applicantName' in data) || (data.applicantName is string && data.applicantName.size() <= 120)) &&
+        (!('applicantEmail' in data) || (data.applicantEmail is string && data.applicantEmail.size() <= 160)) &&
+        (!('applicantPhone' in data) || (data.applicantPhone is string && data.applicantPhone.size() <= 32)) &&
+        data.planId is string && data.planId.size() >= 3 && data.planId.size() <= 64 &&
+        (!('planTitle' in data) || (data.planTitle is string && data.planTitle.size() <= 120)) &&
+        data.orderAmountINR is number && data.orderAmountINR >= 0 && data.orderAmountINR <= 10000000 &&
+        (!('baseAmountINR' in data) || (data.baseAmountINR is number && data.baseAmountINR >= 0 && data.baseAmountINR <= 10000000)) &&
+        data.commissionRatePercent is number && data.commissionRatePercent == 10 &&
+        data.commissionAmountINR is number && data.commissionAmountINR >= 0 && data.commissionAmountINR <= 1000000 &&
+        data.razorpayOrderId is string && data.razorpayOrderId.size() <= 128 &&
+        (!('razorpayPaymentId' in data) || (data.razorpayPaymentId is string && data.razorpayPaymentId.size() <= 128)) &&
+        data.paymentStatus in ['PENDING', 'CAPTURED', 'REFUNDED', 'FAILED'] &&
+        data.payoutStatus in ['Pending', 'Approved', 'Paid', 'Rejected'] &&
+        (!('payoutUtr' in data) || (data.payoutUtr is string && data.payoutUtr.size() <= 64)) &&
+        (!('paidAt' in data) || (data.paidAt is string && data.paidAt.size() <= 64)) &&
+        data.selfReferralBlocked is bool &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() <= 64;
     }
 
     // ------------------------------------------------------------------
@@ -462,7 +517,60 @@ service cloud.firestore {
     }
 
     // ------------------------------------------------------------------
-    // 10. Startup Connectivity Probe Document
+    // 10. Franchise Referral Partners (Owner & Admin Isolated)
+    // ------------------------------------------------------------------
+    match /referral_partners/{referralCode} {
+      allow get: if isValidId(referralCode) && (
+        isAdmin() || isOwnerUid(existing().userId) || isOwnerEmail(existing().email)
+      );
+
+      allow list: if isVerifiedBootstrapAdmin() ||
+        (isVerifiedUser() && existing().userId == request.auth.uid);
+
+      allow create: if isValidId(referralCode) &&
+        isVerifiedUser() &&
+        isValidReferralPartner(incoming(), referralCode) &&
+        incoming().userId == request.auth.uid &&
+        incoming().email.lower() == request.auth.token.email.lower();
+
+      allow update: if isValidId(referralCode) &&
+        isValidReferralPartner(incoming(), referralCode) &&
+        incoming().referralCode == existing().referralCode &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (isAdmin() || isOwnerUid(existing().userId));
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 11. Verified Franchise Referral Attributions & Payout Ledger (Admin Write-Only)
+    // ------------------------------------------------------------------
+    match /referrals/{referralId} {
+      allow get: if isValidId(referralId) && (
+        isAdmin() ||
+        (('referrerEmail' in existing()) && isOwnerEmail(existing().referrerEmail)) ||
+        (('applicantEmail' in existing()) && isOwnerEmail(existing().applicantEmail))
+      );
+
+      allow list: if isVerifiedBootstrapAdmin();
+
+      allow create: if isValidId(referralId) &&
+        isAdmin() &&
+        isValidReferralRecord(incoming(), referralId);
+
+      allow update: if isValidId(referralId) &&
+        isAdmin() &&
+        isValidReferralRecord(incoming(), referralId) &&
+        incoming().referralId == existing().referralId &&
+        incoming().referralCode == existing().referralCode &&
+        incoming().createdAt == existing().createdAt;
+
+      allow delete: if false;
+    }
+
+    // ------------------------------------------------------------------
+    // 12. Startup Connectivity Probe Document
     // ------------------------------------------------------------------
     match /test/{docId} {
       allow get: if docId == 'connection';

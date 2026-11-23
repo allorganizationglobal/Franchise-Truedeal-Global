@@ -122,6 +122,14 @@ export const PAGE_SEO_MAP: Record<string, PageSeoConfig> = {
     robots: INDEX_ROBOTS,
     ogType: 'website'
   },
+  referral: {
+    title: 'Refer & Earn 10% Instant Commission | TRUEDEAL GLOBAL Franchise Referral Program',
+    description:
+      'Join the official TRUEDEAL GLOBAL OPC PVT LTD Franchise Referral Program. Earn 10% commission (₹250 to ₹1,00,000 per verified Razorpay signup) across all 8 franchise plans with direct UPI/NEFT payouts in 48–72 hours.',
+    canonicalUrl: `${CANONICAL_BASE_URL}/referral`,
+    robots: INDEX_ROBOTS,
+    ogType: 'website'
+  },
   api: {
     title: 'Partner Integration & API Specifications | TRUEDEAL GLOBAL',
     description:

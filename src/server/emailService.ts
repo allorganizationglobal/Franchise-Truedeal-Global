@@ -14,7 +14,9 @@ export type FranchiseEmailEvent =
   | 'payment_failed'
   | 'payment_pending'
   | 'application_approved'
-  | 'application_rejected';
+  | 'application_rejected'
+  | 'referral_commission_referrer'
+  | 'referral_commission_admin';
 
 export interface TransactionalEmailPayload {
   event: FranchiseEmailEvent;
@@ -30,6 +32,13 @@ export interface TransactionalEmailPayload {
   gatewayName?: string;
   receiptNumber?: string;
   reason?: string;
+  referralCode?: string;
+  referrerName?: string;
+  referrerPhone?: string;
+  referrerEmail?: string;
+  referrerUpiOrBank?: string;
+  commissionAmountINR?: number;
+  commissionRatePercent?: number;
 }
 
 export interface EmailDispatchResult {
@@ -68,8 +77,64 @@ function buildEmailContent(payload: TransactionalEmailPayload): { subject: strin
   const safeGateway = escapeHtml(payload.gatewayName || 'Razorpay');
   const safeReceipt = escapeHtml(payload.receiptNumber || '');
   const safeReason = escapeHtml(payload.reason || '');
+  const safeRefCode = escapeHtml(payload.referralCode || '');
+  const safeReferrerName = escapeHtml(payload.referrerName || 'Referral Partner');
+  const safeReferrerPhone = escapeHtml(payload.referrerPhone || 'Not provided');
+  const safeReferrerEmail = escapeHtml(payload.referrerEmail || 'Not provided');
+  const safeReferrerUpi = escapeHtml(payload.referrerUpiOrBank || 'Pending confirmation');
+  const safeCommission =
+    typeof payload.commissionAmountINR === 'number'
+      ? `₹${payload.commissionAmountINR.toLocaleString('en-IN')}`
+      : '₹0';
+  const safeCommRate = typeof payload.commissionRatePercent === 'number' ? payload.commissionRatePercent : 10;
 
   switch (payload.event) {
+    case 'referral_commission_referrer':
+      return {
+        subject: `Referral Commission Earned (${safeCommission} INR) — Code ${safeRefCode} | TRUEDEAL GLOBAL`,
+        html: `
+          <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;color:#0f172a;">
+            <h2 style="color:#059669;">Congratulations! You Earned ${safeCommission} Referral Commission</h2>
+            <p>Dear ${safeReferrerName},</p>
+            <p>A franchise applicant referred using your unique code <strong>${safeRefCode}</strong> has completed a verified Razorpay payment with TRUEDEAL GLOBAL OPC PVT LTD.</p>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Your Referral Code</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeRefCode}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referred Applicant</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeName} (#${safeAppId})</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Franchise Plan Purchased</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safePlan}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Verified Order Amount</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeAmount} INR</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Your Commission (${safeCommRate}%)</strong></td><td style="padding:8px;border:1px solid #e2e8f0;color:#059669;"><strong>${safeCommission} INR</strong></td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Razorpay Payment ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeGatewayRef || safeTxn}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Registered UPI / Bank Details</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeReferrerUpi}</td></tr>
+            </table>
+            <p><strong>Payout Timeline:</strong> Your referral commission is queued for verification and will be settled directly via UPI/NEFT within <strong>48–72 hours</strong> of verified Razorpay capture (subject to non-refunded order terms).</p>
+            <p>Track your referral payout status anytime at <a href="https://businessfranchise.truedealglobal.com/referral">https://businessfranchise.truedealglobal.com/referral</a>.</p>
+            <p style="font-size:12px;color:#64748b;">TRUEDEAL GLOBAL OPC PVT LTD | Support: info@truedealglobal.com</p>
+          </div>`
+      };
+
+    case 'referral_commission_admin':
+      return {
+        subject: `[Referral Payout Due: ${safeCommission}] Code ${safeRefCode} — App #${safeAppId} (${safePlan})`,
+        html: `
+          <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;color:#0f172a;">
+            <h2 style="color:#4f46e5;">Verified Franchise Referral Attribution — Payout Action Required</h2>
+            <p>A referred franchise application has completed cryptographically verified Razorpay payment capture.</p>
+            <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referral Code</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeRefCode}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referrer Name</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeReferrerName}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referrer Mobile / Email</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeReferrerPhone} · ${safeReferrerEmail}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referrer UPI / Bank</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeReferrerUpi}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Referred Applicant</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeName} (#${safeAppId})</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Plan Purchased</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safePlan}</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Order Amount</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeAmount} INR</td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Commission Payable (${safeCommRate}%)</strong></td><td style="padding:8px;border:1px solid #e2e8f0;color:#059669;"><strong>${safeCommission} INR</strong></td></tr>
+              <tr><td style="padding:8px;border:1px solid #e2e8f0;"><strong>Razorpay Order / Payment ID</strong></td><td style="padding:8px;border:1px solid #e2e8f0;">${safeTxn} / ${safeGatewayRef || 'Captured'}</td></tr>
+            </table>
+            <p>Review and settle this payout inside the Admin Dashboard → <strong>Referral Payouts</strong> tab at <a href="https://businessfranchise.truedealglobal.com/admin">https://businessfranchise.truedealglobal.com/admin</a>.</p>
+            <p style="font-size:12px;color:#64748b;">TRUEDEAL GLOBAL OPC PVT LTD Automated Referral Attribution Engine</p>
+          </div>`
+      };
+
     case 'payment_success_receipt':
       return {
         subject: `Verified Payment Receipt (${safeReceipt}) — TRUEDEAL GLOBAL Application #${safeAppId}`,
@@ -171,7 +236,11 @@ export async function sendTransactionalFranchiseEmail(
   const personalization: Record<string, unknown> = {
     to: [{ email: payload.toEmail, name: payload.applicantName }]
   };
-  if (adminCc && adminCc.toLowerCase() !== payload.toEmail.toLowerCase()) {
+  if (
+    payload.event !== 'referral_commission_admin' &&
+    adminCc &&
+    adminCc.toLowerCase() !== payload.toEmail.toLowerCase()
+  ) {
     personalization.bcc = [{ email: adminCc }];
   }
 

@@ -115,6 +115,7 @@ export default async function handler(req: any, res: any) {
       applicantName,
       email,
       phone,
+      referralCode: typeof body.referralCode === 'string' ? body.referralCode : undefined,
       termsAccepted: body.termsAccepted !== false,
       forceNewOrder: Boolean(body.forceNewOrder),
       clientIp

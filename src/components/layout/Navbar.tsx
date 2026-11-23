@@ -305,6 +305,7 @@ export function Navbar({
               {[
                 { id: 'plans', label: t('nav.plans') },
                 { id: 'pricing', label: language === 'hi' ? 'मूल्य व पैकेज' : 'Pricing' },
+                { id: 'referral', label: language === 'hi' ? 'रेफर व कमाएं' : 'Refer & Earn' },
                 { id: 'apply', label: t('nav.apply') },
                 { id: 'tracker', label: t('nav.tracker') },
                 { id: 'about', label: language === 'hi' ? 'हमारे बारे में' : 'About Us' },
@@ -579,6 +580,7 @@ export function Navbar({
               {[
                 { id: 'plans', label: t('nav.plans') },
                 { id: 'pricing', label: 'Pricing & Packages' },
+                { id: 'referral', label: language === 'hi' ? 'रेफर व कमाएं (10%)' : 'Refer & Earn (10%)' },
                 { id: 'apply', label: t('nav.apply') },
                 { id: 'tracker', label: t('nav.tracker') },
                 { id: 'about', label: 'About Us' },

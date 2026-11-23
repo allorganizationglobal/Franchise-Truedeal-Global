@@ -14,6 +14,7 @@ import { FranchisePlansView } from './components/portal/FranchisePlansView';
 import { ApplicationWizard } from './components/portal/ApplicationWizard';
 import { ApplicantStatusTracker } from './components/portal/ApplicantStatusTracker';
 import { PaymentResultView } from './components/portal/PaymentResultView';
+import { ReferralProgramPage } from './components/portal/ReferralProgramPage';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { AnalyticsView } from './components/admin/AnalyticsView';
 import { ApiDocsView } from './components/docs/ApiDocsView';
@@ -37,6 +38,7 @@ import { WhatsAppSupportWidget } from './components/common/WhatsAppSupportWidget
 import { FranchiseStorageService, getPlanById } from './services/storage';
 import { NotificationService } from './services/notificationService';
 import { updateDocumentSeo } from './utils/seo';
+import { captureReferralFromUrl, getStoredReferralCode } from './utils/referralTracking';
 import { UserRole, AppNotification, EmailNotification, SyncQueueItem, Currency, FranchiseApplication } from './types/franchise';
 
 const PATH_TO_TAB: Record<string, string> = {
@@ -46,6 +48,8 @@ const PATH_TO_TAB: Record<string, string> = {
   '/packages': 'pricing',
   '/apply': 'apply',
   '/tracker': 'tracker',
+  '/referral': 'referral',
+  '/refer': 'referral',
   '/about': 'about',
   '/about-us': 'about',
   '/contact': 'contact',
@@ -77,6 +81,7 @@ const TAB_TO_PATH: Record<string, string> = {
   pricing: '/pricing',
   apply: '/apply',
   tracker: '/tracker',
+  referral: '/referral',
   about: '/about',
   contact: '/contact',
   terms: '/terms',
@@ -191,8 +196,9 @@ export default function App() {
     }
   }, [currency]);
 
-  // Load initial stores & listen to network events
+  // Load initial stores, capture ?ref=CODE attribution for 30 days, & listen to network events
   useEffect(() => {
+    captureReferralFromUrl();
     FranchiseStorageService.init();
     refreshAllData();
 
@@ -338,9 +344,15 @@ export default function App() {
           (userEmail && a.applicant.email.toLowerCase() === userEmail))
     );
 
+    const activeReferralCode = getStoredReferralCode() || undefined;
+
     if (existingUnpaid) {
-      setSelectedAppId(existingUnpaid.id);
-      setQuickPayApp(existingUnpaid);
+      const enriched =
+        activeReferralCode && !existingUnpaid.referralCode
+          ? { ...existingUnpaid, referralCode: activeReferralCode }
+          : existingUnpaid;
+      setSelectedAppId(enriched.id);
+      setQuickPayApp(enriched);
       return;
     }
 
@@ -371,6 +383,7 @@ export default function App() {
       planId: plan.id,
       amount: plan.priceINR,
       paymentStatus: 'PAYMENT_PENDING',
+      referralCode: activeReferralCode,
       territoryRequested: 'India — Primary Territory',
       preferredStartDate: nowIso.slice(0, 10),
       operationalExperienceYears: 1,
@@ -526,6 +539,10 @@ export default function App() {
               refreshAllData();
             }}
           />
+        )}
+
+        {currentTab === 'referral' && (
+          <ReferralProgramPage currentUser={currentUser} onNavigate={handleNavigate} />
         )}
 
         {currentTab === 'about' && <AboutUsPage onNavigate={handleNavigate} />}
